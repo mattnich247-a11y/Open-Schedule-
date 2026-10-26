@@ -1,0 +1,6 @@
+{
+  "name": "Open Schedule",
+  "description": "Sector-agnostic, local-first workforce scheduling, timeclock, and operations platform with WebCrypto security and decoupled plugin ecosystem.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
