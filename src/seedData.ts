@@ -127,6 +127,9 @@ export function getBistro313Preset(): OrganizationState {
     managerUsername: 'manager',
     managerPasswordHash: DEMO_PASSWORD_HASH,
     managerSaltHex: DEMO_PASSWORD_SALT,
+    creatorUsername: 'manager',
+    creatorPasswordHash: DEMO_PASSWORD_HASH,
+    creatorSaltHex: DEMO_PASSWORD_SALT,
     featureToggles: {
       useAi: true,
       timeclockMode: 'both',
@@ -360,12 +363,15 @@ export function getBistro313Preset(): OrganizationState {
   ];
 
   return {
+    orgId: 'org_bistro313',
+    versionTimestampMs: Date.now(),
+    lastModifiedBy: 'Manager',
     settings,
     departments,
     roles,
     skillTags,
     employees,
-    shifts,
+    shifts: shifts.map((s) => ({ ...s, orgId: 'org_bistro313', orgName: 'Bistro 313' })),
     shiftTemplates,
     coverageRequirements: [
       { id: 'cov-1', dayOfWeek: 5, roleId: 'role-cook', startTime: '15:00', endTime: '23:00', targetHeadcount: 2 },
@@ -467,6 +473,9 @@ export function getApexOutfitterPreset(): OrganizationState {
     managerUsername: 'manager',
     managerPasswordHash: DEMO_PASSWORD_HASH,
     managerSaltHex: DEMO_PASSWORD_SALT,
+    creatorUsername: 'manager',
+    creatorPasswordHash: DEMO_PASSWORD_HASH,
+    creatorSaltHex: DEMO_PASSWORD_SALT,
     featureToggles: {
       useAi: true,
       timeclockMode: 'both',
@@ -553,16 +562,19 @@ export function getApexOutfitterPreset(): OrganizationState {
   ];
 
   return {
+    orgId: 'org_apex',
+    versionTimestampMs: Date.now(),
+    lastModifiedBy: 'Manager',
     settings,
     departments,
     roles,
     skillTags,
     employees,
     shifts: [
-      { id: 's-apex-1', employeeId: 'emp-brett', roleId: 'role-supervisor', departmentId: 'dept-sales', date: mon, startTime: '08:00', endTime: '16:30', requiredTags: ['tag-keyholder'], status: 'published', isUpForGrabs: false },
-      { id: 's-apex-2', employeeId: 'emp-chloe', roleId: 'role-advisor', departmentId: 'dept-sales', date: mon, startTime: '10:00', endTime: '18:00', requiredTags: [], status: 'published', isUpForGrabs: false },
-      { id: 's-apex-3', employeeId: 'emp-darek', roleId: 'role-freight', departmentId: 'dept-logistics', date: mon, startTime: '08:00', endTime: '16:00', requiredTags: ['tag-forklift'], status: 'published', isUpForGrabs: false },
-      { id: 's-apex-4', employeeId: null, roleId: 'role-cashier', departmentId: 'dept-cash', date: fri, startTime: '12:00', endTime: '20:00', requiredTags: [], status: 'draft', isUpForGrabs: false },
+      { id: 's-apex-1', orgId: 'org_apex', orgName: 'Apex Outfitter', employeeId: 'emp-brett', roleId: 'role-supervisor', departmentId: 'dept-sales', date: mon, startTime: '08:00', endTime: '16:30', requiredTags: ['tag-keyholder'], status: 'published', isUpForGrabs: false },
+      { id: 's-apex-2', orgId: 'org_apex', orgName: 'Apex Outfitter', employeeId: 'emp-chloe', roleId: 'role-advisor', departmentId: 'dept-sales', date: mon, startTime: '10:00', endTime: '18:00', requiredTags: [], status: 'published', isUpForGrabs: false },
+      { id: 's-apex-3', orgId: 'org_apex', orgName: 'Apex Outfitter', employeeId: 'emp-darek', roleId: 'role-freight', departmentId: 'dept-logistics', date: mon, startTime: '08:00', endTime: '16:00', requiredTags: ['tag-forklift'], status: 'published', isUpForGrabs: false },
+      { id: 's-apex-4', orgId: 'org_apex', orgName: 'Apex Outfitter', employeeId: null, roleId: 'role-cashier', departmentId: 'dept-cash', date: fri, startTime: '12:00', endTime: '20:00', requiredTags: [], status: 'draft', isUpForGrabs: false },
     ],
     shiftTemplates: [
       { id: 'tmpl-store-open', name: 'Store Opener (8:00 AM – 4:30 PM)', roleId: 'role-supervisor', startTime: '08:00', endTime: '16:30', requiredTags: ['tag-keyholder'] },
@@ -618,6 +630,9 @@ export function getMetroUrgentCarePreset(): OrganizationState {
     managerUsername: 'manager',
     managerPasswordHash: DEMO_PASSWORD_HASH,
     managerSaltHex: DEMO_PASSWORD_SALT,
+    creatorUsername: 'manager',
+    creatorPasswordHash: DEMO_PASSWORD_HASH,
+    creatorSaltHex: DEMO_PASSWORD_SALT,
     featureToggles: {
       useAi: true,
       timeclockMode: 'both',
@@ -704,15 +719,18 @@ export function getMetroUrgentCarePreset(): OrganizationState {
   ];
 
   return {
+    orgId: 'org_metro',
+    versionTimestampMs: Date.now(),
+    lastModifiedBy: 'Manager',
     settings,
     departments,
     roles,
     skillTags,
     employees,
     shifts: [
-      { id: 's-med-1', employeeId: 'emp-dr-chen', roleId: 'role-md', departmentId: 'dept-nursing', date: mon, startTime: '08:00', endTime: '16:30', requiredTags: ['tag-acls'], status: 'published', isUpForGrabs: false },
-      { id: 's-med-2', employeeId: 'emp-rn-jamal', roleId: 'role-rn', departmentId: 'dept-nursing', date: mon, startTime: '07:30', endTime: '16:00', requiredTags: ['tag-acls'], status: 'published', isUpForGrabs: false },
-      { id: 's-med-3', employeeId: 'emp-ma-sofia', roleId: 'role-ma', departmentId: 'dept-triage', date: mon, startTime: '08:00', endTime: '16:30', requiredTags: ['tag-bilingual'], status: 'published', isUpForGrabs: false },
+      { id: 's-med-1', orgId: 'org_metro', orgName: 'Metro Urgent Care', employeeId: 'emp-dr-chen', roleId: 'role-md', departmentId: 'dept-nursing', date: mon, startTime: '08:00', endTime: '16:30', requiredTags: ['tag-acls'], status: 'published', isUpForGrabs: false },
+      { id: 's-med-2', orgId: 'org_metro', orgName: 'Metro Urgent Care', employeeId: 'emp-rn-jamal', roleId: 'role-rn', departmentId: 'dept-nursing', date: mon, startTime: '07:30', endTime: '16:00', requiredTags: ['tag-acls'], status: 'published', isUpForGrabs: false },
+      { id: 's-med-3', orgId: 'org_metro', orgName: 'Metro Urgent Care', employeeId: 'emp-ma-sofia', roleId: 'role-ma', departmentId: 'dept-triage', date: mon, startTime: '08:00', endTime: '16:30', requiredTags: ['tag-bilingual'], status: 'published', isUpForGrabs: false },
     ],
     shiftTemplates: [
       { id: 'tmpl-med-day', name: 'Clinical Day (7:30 AM – 4:00 PM)', roleId: 'role-rn', startTime: '07:30', endTime: '16:00', requiredTags: ['tag-acls'] },
@@ -734,6 +752,9 @@ export function getMetroUrgentCarePreset(): OrganizationState {
 // Preset 4: Blank Custom Organization
 export function getBlankPreset(): OrganizationState {
   return {
+    orgId: 'org_custom',
+    versionTimestampMs: Date.now(),
+    lastModifiedBy: 'Manager',
     settings: {
       orgName: 'My Business',
       industry: 'Small Business',
@@ -765,6 +786,9 @@ export function getBlankPreset(): OrganizationState {
       managerUsername: 'manager',
       managerPasswordHash: DEMO_PASSWORD_HASH,
       managerSaltHex: DEMO_PASSWORD_SALT,
+      creatorUsername: 'manager',
+      creatorPasswordHash: DEMO_PASSWORD_HASH,
+      creatorSaltHex: DEMO_PASSWORD_SALT,
       featureToggles: {
         useAi: false,
         timeclockMode: 'both',

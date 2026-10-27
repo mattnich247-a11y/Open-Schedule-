@@ -74,6 +74,8 @@ export interface Employee {
 
 export interface Shift {
   id: string;
+  orgId?: string; // Multi-business attribution (e.g. 'org_bistro313')
+  orgName?: string; // Display name of business
   employeeId: string | null; // null = open / unassigned shift
   roleId: string;
   departmentId: string;
@@ -192,6 +194,9 @@ export interface OrganizationSettings {
   managerUsername: string;
   managerPasswordHash: string;
   managerSaltHex: string;
+  creatorUsername?: string; // Permanent creator/owner bound at setup for factory reset
+  creatorPasswordHash?: string;
+  creatorSaltHex?: string;
   featureToggles: FeatureToggles;
   cloudSync: CloudSyncConfig;
   autoSaveIntervalMinutes: number;
@@ -292,7 +297,19 @@ export interface AIConfig {
   modelName: string;
 }
 
+export interface AuditStamp {
+  id: string;
+  actorName: string;
+  actorRole: 'manager' | 'staff' | 'system';
+  action: string;
+  details: string;
+  timestampIso: string;
+}
+
 export interface OrganizationState {
+  orgId?: string; // Workspace identifier (e.g. 'org_bistro313')
+  versionTimestampMs?: number; // Atomic synchronization & collision detection
+  lastModifiedBy?: string; // Who made the last write
   settings: OrganizationSettings;
   departments: Department[];
   roles: Role[];
@@ -310,4 +327,15 @@ export interface OrganizationState {
   salesData: ToastSalesRecord[];
   reservationsData: OpenTableReservationRecord[];
   aiConfig: AIConfig;
+  auditStamps?: AuditStamp[];
+}
+
+export type WorkspacesState = Record<string, OrganizationState>;
+
+export interface CloudSyncConflict {
+  isOpen: boolean;
+  cloudVersionTimestampMs: number;
+  cloudLastModifiedBy: string;
+  localVersionTimestampMs: number;
+  cloudState: OrganizationState;
 }

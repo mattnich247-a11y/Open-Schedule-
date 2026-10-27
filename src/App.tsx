@@ -9,10 +9,12 @@ import {
   Calendar,
   Check,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   Clock,
   Compass,
   Download,
+  Globe,
   KeyRound,
   Layers,
   Lock,
@@ -30,11 +32,14 @@ import {
   Upload,
   User,
   Users,
+  Wifi,
+  WifiOff,
   X,
 } from 'lucide-react';
 import {
   AppMode,
   AvailabilityBlock,
+  CloudSyncConflict,
   CoworkerMessage,
   Department,
   Employee,
@@ -45,6 +50,7 @@ import {
   SkillTag,
   TimeOffRequest,
   TimePunch,
+  WorkspacesState,
 } from './types';
 import {
   DEFAULT_PLUGINS,
@@ -58,6 +64,14 @@ import {
 } from './seedData';
 import { hashPassword, verifyPassword } from './cryptoEngine';
 import { importOrganizationFile } from './calendarAndExport';
+import {
+  atomicCloudWrite,
+  checkForCloudConflict,
+  getIsDirty,
+  hydrateFromCloudIfNewer,
+  markStateDirty,
+  testCloudConnection,
+} from './aiAndCloudService';
 import { ManagerDashboard } from './components/ManagerDashboard';
 import { StaffMobileView } from './components/StaffMobileView';
 import { KioskTimeclock } from './components/KioskTimeclock';
@@ -66,7 +80,35 @@ import { PluginModal } from './components/PluginModal';
 const INACTIVITY_TIMEOUT_SECONDS = 300; // 5 minutes
 
 export default function App() {
-  // Persistence state
+  // Multi-workspace container
+  const [workspaces, setWorkspaces] = useState<WorkspacesState>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('openschedule_workspaces');
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch {
+          // fallback
+        }
+      }
+    }
+    const bistro = getBistro313Preset();
+    const apex = getApexOutfitterPreset();
+    return {
+      [bistro.orgId || 'org_bistro313']: bistro,
+      [apex.orgId || 'org_apex']: apex,
+    };
+  });
+
+  const [currentOrgId, setCurrentOrgId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const savedId = localStorage.getItem('openschedule_current_org_id');
+      if (savedId) return savedId;
+    }
+    return 'org_bistro313';
+  });
+
+  // Current active workspace state
   const [state, setState] = useState<OrganizationState>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('openschedule_state');
@@ -80,6 +122,55 @@ export default function App() {
     }
     return getBistro313Preset();
   });
+
+  // Network resilience & online/offline listener
+  const [isOnline, setIsOnline] = useState<boolean>(() =>
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+  const [reconnectedBanner, setReconnectedBanner] = useState<boolean>(false);
+  const [syncConflict, setSyncConflict] = useState<CloudSyncConflict | null>(null);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      setReconnectedBanner(true);
+      setTimeout(() => setReconnectedBanner(false), 4000);
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // 1-minute periodic atomic cloud sync loop (only when dirty & online)
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      if (getIsDirty() && isOnline) {
+        try {
+          await atomicCloudWrite(state);
+          const conflict = await checkForCloudConflict(state);
+          if (conflict.hasConflict && conflict.cloudState) {
+            setSyncConflict({
+              isOpen: true,
+              cloudState: conflict.cloudState,
+              cloudLastModifiedBy: conflict.cloudLastModifiedBy || 'Another Manager',
+              cloudVersionTimestampMs: conflict.cloudVersionTimestampMs || Date.now(),
+              localVersionTimestampMs: state.versionTimestampMs || 0,
+            });
+          }
+        } catch (err) {
+          console.warn('Periodic atomic sync failed:', err);
+        }
+      }
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [state, isOnline]);
 
   // Current session & mode (defaults to logged out)
   const [appMode, setAppMode] = useState<AppMode>('manager');
@@ -115,7 +206,21 @@ export default function App() {
   const [importPassphrase, setImportPassphrase] = useState<string>('');
   const [importError, setImportError] = useState<string>('');
 
-  // Manager Account Setup Wizard State
+  // Manager Account Setup Wizard State & Draft Resume
+  const [savedWizardDraft, setSavedWizardDraft] = useState<any>(() => {
+    if (typeof window !== 'undefined') {
+      const draft = localStorage.getItem('openschedule_wizard_draft');
+      if (draft) {
+        try {
+          return JSON.parse(draft);
+        } catch {
+          // fallback
+        }
+      }
+    }
+    return null;
+  });
+
   const [isSetupWizardOpen, setIsSetupWizardOpen] = useState<boolean>(false);
   const [wizardStep, setWizardStep] = useState<number>(1);
   const [wizardError, setWizardError] = useState<string>('');
@@ -175,23 +280,172 @@ export default function App() {
   ]);
   const [newSkillInput, setNewSkillInput] = useState<string>('');
 
-  // Step 4 Wizard: Cloud Sync
-  const [wizardCloudSyncEnabled, setWizardCloudSyncEnabled] = useState<boolean>(false);
+  // Step 4 Wizard: Mandatory Cloud Sync Setup & Testing
+  const [wizardCloudSyncEnabled, setWizardCloudSyncEnabled] = useState<boolean>(true);
   const [wizardCloudProvider, setWizardCloudProvider] = useState<'supabase' | 'firebase' | 'local_relay'>('supabase');
-  const [wizardCloudProjectUrl, setWizardCloudProjectUrl] = useState<string>('');
-  const [wizardCloudApiKey, setWizardCloudApiKey] = useState<string>('');
+  const [wizardCloudProjectUrl, setWizardCloudProjectUrl] = useState<string>('https://relay.openschedule.local');
+  const [wizardCloudApiKey, setWizardCloudApiKey] = useState<string>('relay_anon_key_123456');
+  const [isCloudTesting, setIsCloudTesting] = useState<boolean>(false);
+  const [isCloudTested, setIsCloudTested] = useState<boolean>(false);
+  const [cloudTestMessage, setCloudTestMessage] = useState<string>('');
 
   // Step 5 Wizard: AI Key
   const [wizardAiApiKey, setWizardAiApiKey] = useState<string>('');
 
-  // Auto-save state to localStorage
+  // Auto-save wizard draft whenever fields change
+  useEffect(() => {
+    if (isSetupWizardOpen) {
+      const draft = {
+        wizardStep,
+        wizardOrgName,
+        wizardIndustry,
+        wizardStreetAddress,
+        wizardOpenTime,
+        wizardCloseTime,
+        wizardBufferHours,
+        wizardOvertimeThreshold,
+        wizardManagerName,
+        wizardManagerUsername,
+        wizardManagerPassword,
+        wizardDepartments,
+        wizardRoles,
+        wizardSkills,
+        wizardCloudSyncEnabled,
+        wizardCloudProvider,
+        wizardCloudProjectUrl,
+        wizardCloudApiKey,
+        wizardAiApiKey,
+        wizardUseAi,
+        wizardTimeclockMode,
+        wizardTrackLaborCost,
+        isCloudTested,
+      };
+      localStorage.setItem('openschedule_wizard_draft', JSON.stringify(draft));
+    }
+  }, [
+    isSetupWizardOpen,
+    wizardStep,
+    wizardOrgName,
+    wizardIndustry,
+    wizardStreetAddress,
+    wizardOpenTime,
+    wizardCloseTime,
+    wizardBufferHours,
+    wizardOvertimeThreshold,
+    wizardManagerName,
+    wizardManagerUsername,
+    wizardManagerPassword,
+    wizardDepartments,
+    wizardRoles,
+    wizardSkills,
+    wizardCloudSyncEnabled,
+    wizardCloudProvider,
+    wizardCloudProjectUrl,
+    wizardCloudApiKey,
+    wizardAiApiKey,
+    wizardUseAi,
+    wizardTimeclockMode,
+    wizardTrackLaborCost,
+    isCloudTested,
+  ]);
+
+  // Resume unfinished wizard draft
+  const handleResumeWizard = () => {
+    if (!savedWizardDraft) return;
+    setWizardStep(savedWizardDraft.wizardStep || 1);
+    setWizardOrgName(savedWizardDraft.wizardOrgName || '');
+    setWizardIndustry(savedWizardDraft.wizardIndustry || 'hospitality');
+    setWizardStreetAddress(savedWizardDraft.wizardStreetAddress || '');
+    setWizardOpenTime(savedWizardDraft.wizardOpenTime || '08:00');
+    setWizardCloseTime(savedWizardDraft.wizardCloseTime || '22:00');
+    setWizardBufferHours(savedWizardDraft.wizardBufferHours || 1);
+    setWizardOvertimeThreshold(savedWizardDraft.wizardOvertimeThreshold || 40);
+    setWizardManagerName(savedWizardDraft.wizardManagerName || '');
+    setWizardManagerUsername(savedWizardDraft.wizardManagerUsername || 'manager');
+    setWizardManagerPassword(savedWizardDraft.wizardManagerPassword || '');
+    if (savedWizardDraft.wizardDepartments) setWizardDepartments(savedWizardDraft.wizardDepartments);
+    if (savedWizardDraft.wizardRoles) setWizardRoles(savedWizardDraft.wizardRoles);
+    if (savedWizardDraft.wizardSkills) setWizardSkills(savedWizardDraft.wizardSkills);
+    setWizardCloudSyncEnabled(savedWizardDraft.wizardCloudSyncEnabled ?? true);
+    setWizardCloudProvider(savedWizardDraft.wizardCloudProvider || 'supabase');
+    setWizardCloudProjectUrl(savedWizardDraft.wizardCloudProjectUrl || 'https://relay.openschedule.local');
+    setWizardCloudApiKey(savedWizardDraft.wizardCloudApiKey || 'relay_anon_key_123456');
+    setWizardAiApiKey(savedWizardDraft.wizardAiApiKey || '');
+    setWizardUseAi(savedWizardDraft.wizardUseAi ?? false);
+    setWizardTimeclockMode(savedWizardDraft.wizardTimeclockMode || 'both');
+    setWizardTrackLaborCost(savedWizardDraft.wizardTrackLaborCost ?? true);
+    setIsCloudTested(savedWizardDraft.isCloudTested ?? false);
+    setIsSetupWizardOpen(true);
+  };
+
+  const handleDiscardWizard = () => {
+    localStorage.removeItem('openschedule_wizard_draft');
+    setSavedWizardDraft(null);
+    showToast('Unfinished setup draft discarded.');
+  };
+
+  // Switch workspace
+  const handleSwitchWorkspace = (orgId: string) => {
+    const target = workspaces[orgId];
+    if (target) {
+      setCurrentOrgId(orgId);
+      setState(target);
+      setCurrentEmployee(target.employees[0] || null);
+      showToast(`Switched workspace to ${target.settings.orgName}`);
+    }
+  };
+
+  // State update wrapper with atomic dirty flag and audit stamping
+  const handleUpdateState = (
+    newState: OrganizationState,
+    actorDetails?: {
+      name: string;
+      role: 'manager' | 'staff' | 'system';
+      action: string;
+      details: string;
+    }
+  ) => {
+    const orgId = newState.orgId || currentOrgId || 'org_main';
+    markStateDirty(true);
+
+    let updatedStamps = newState.auditStamps || [];
+    if (actorDetails) {
+      const newStamp = {
+        id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        actorName: actorDetails.name,
+        actorRole: actorDetails.role,
+        action: actorDetails.action,
+        details: actorDetails.details,
+        timestampIso: new Date().toISOString(),
+      };
+      updatedStamps = [newStamp, ...updatedStamps].slice(0, 100);
+    }
+
+    const stateWithMeta: OrganizationState = {
+      ...newState,
+      orgId,
+      versionTimestampMs: Date.now(),
+      lastModifiedBy: actorDetails?.name || state.settings.managerUsername || 'Manager',
+      auditStamps: updatedStamps,
+    };
+
+    setState(stateWithMeta);
+    setWorkspaces((prev) => ({
+      ...prev,
+      [orgId]: stateWithMeta,
+    }));
+  };
+
+  // Auto-save active workspace and dictionary to localStorage
   useEffect(() => {
     try {
       localStorage.setItem('openschedule_state', JSON.stringify(state));
+      localStorage.setItem('openschedule_workspaces', JSON.stringify(workspaces));
+      localStorage.setItem('openschedule_current_org_id', currentOrgId);
     } catch {
       // quota or local storage disabled
     }
-  }, [state]);
+  }, [state, workspaces, currentOrgId]);
 
   // Keep simulator employee synchronized if employees list changes
   useEffect(() => {
@@ -442,7 +696,12 @@ export default function App() {
       kioskCodeVerified: true,
     };
 
+    const newOrgId = `org_${wizardOrgName.toLowerCase().replace(/[^a-z0-9]/g, '') || 'biz'}_${Date.now().toString(36)}`;
+
     const newOrgState: OrganizationState = {
+      orgId: newOrgId,
+      versionTimestampMs: Date.now(),
+      lastModifiedBy: wizardManagerUsername.trim() || 'Manager',
       settings: {
         orgName: wizardOrgName.trim(),
         industry: wizardIndustry,
@@ -474,6 +733,9 @@ export default function App() {
         managerUsername: wizardManagerUsername.trim().toLowerCase() || 'manager',
         managerPasswordHash: hashHex,
         managerSaltHex: saltHex,
+        creatorUsername: wizardManagerUsername.trim().toLowerCase() || 'manager',
+        creatorPasswordHash: hashHex,
+        creatorSaltHex: saltHex,
         featureToggles: {
           useAi: wizardUseAi,
           timeclockMode: wizardTimeclockMode,
@@ -508,8 +770,25 @@ export default function App() {
         modelName: 'gemini-2.5-flash',
         apiKeyEncrypted: wizardAiApiKey.trim() || undefined,
       },
+      auditStamps: [
+        {
+          id: `audit_${Date.now()}`,
+          actorName: wizardManagerName.trim() || 'Business Owner',
+          actorRole: 'manager',
+          action: 'WORKSPACE_CREATED',
+          details: `Initialized new workspace for ${wizardOrgName.trim()}`,
+          timestampIso: new Date().toISOString(),
+        },
+      ],
     };
 
+    localStorage.removeItem('openschedule_wizard_draft');
+    setSavedWizardDraft(null);
+    setWorkspaces((prev) => ({
+      ...prev,
+      [newOrgId]: newOrgState,
+    }));
+    setCurrentOrgId(newOrgId);
     setState(newOrgState);
     setCurrentEmployee(managerEmp);
     setIsSetupWizardOpen(false);
@@ -523,11 +802,19 @@ export default function App() {
       e.id === updatedEmployee.id ? updatedEmployee : e
     );
 
-    setState({
-      ...state,
-      employees: updatedEmployees,
-      punches: [...state.punches, punch],
-    });
+    handleUpdateState(
+      {
+        ...state,
+        employees: updatedEmployees,
+        punches: [...state.punches, punch],
+      },
+      {
+        name: updatedEmployee.name,
+        role: 'staff',
+        action: punch.punchType.toUpperCase(),
+        details: `${updatedEmployee.name} recorded ${punch.punchType.replace('_', ' ')} via ${punch.verifiedVia.toUpperCase()}`,
+      }
+    );
 
     if (currentEmployee?.id === updatedEmployee.id) {
       setCurrentEmployee(updatedEmployee);
@@ -536,6 +823,7 @@ export default function App() {
 
   // Staff action handlers
   const handleClaimShift = (shiftId: string, employeeId: string) => {
+    const emp = state.employees.find((e) => e.id === employeeId);
     const updated = state.shifts.map((s) =>
       s.id === shiftId
         ? {
@@ -546,11 +834,20 @@ export default function App() {
           }
         : s
     );
-    setState({ ...state, shifts: updated });
+    handleUpdateState(
+      { ...state, shifts: updated },
+      {
+        name: emp?.name || 'Staff',
+        role: 'staff',
+        action: 'SHIFT_CLAIMED',
+        details: `${emp?.name || 'Staff'} claimed shift on ${updated.find((s) => s.id === shiftId)?.date}`,
+      }
+    );
     showToast('✓ Shift claimed! It has been added to your personal schedule.');
   };
 
   const handlePostShiftUpForGrabs = (shiftId: string) => {
+    const targetShift = state.shifts.find((s) => s.id === shiftId);
     const updated = state.shifts.map((s) =>
       s.id === shiftId
         ? {
@@ -559,33 +856,41 @@ export default function App() {
           }
         : s
     );
-    setState({ ...state, shifts: updated });
+    handleUpdateState(
+      { ...state, shifts: updated },
+      {
+        name: currentEmployee?.name || 'Staff',
+        role: 'staff',
+        action: 'SHIFT_UP_FOR_GRABS',
+        details: `Posted shift on ${targetShift?.date || 'shift'} up for grabs`,
+      }
+    );
     showToast('✓ Shift posted up for grabs! Qualified coworkers can now view and claim it.');
   };
 
   const handleAddAvailability = (block: AvailabilityBlock) => {
-    setState({
+    handleUpdateState({
       ...state,
       availabilities: [...state.availabilities, block],
     });
   };
 
   const handleDeleteAvailability = (blockId: string) => {
-    setState({
+    handleUpdateState({
       ...state,
       availabilities: state.availabilities.filter((b) => b.id !== blockId),
     });
   };
 
   const handleSubmitTimeOff = (request: TimeOffRequest) => {
-    setState({
+    handleUpdateState({
       ...state,
       timeOffRequests: [...state.timeOffRequests, request],
     });
   };
 
   const handleSendMessage = (msg: CoworkerMessage) => {
-    setState({
+    handleUpdateState({
       ...state,
       messages: [...state.messages, msg],
     });
@@ -624,6 +929,35 @@ export default function App() {
               <p className="text-xs text-slate-500 font-medium">Workforce Scheduling & Secure Timeclock</p>
             </div>
           </div>
+
+          {/* Warm Resume Setup Banner */}
+          {savedWizardDraft && (
+            <div className="mb-5 rounded-2xl border border-emerald-300 bg-emerald-50/80 p-4 text-xs shadow-xs animate-in fade-in">
+              <div className="flex items-center gap-2 font-bold text-slate-900 mb-1">
+                <Sparkles className="h-4 w-4 text-emerald-600 shrink-0" />
+                <span>Unfinished Business Setup Detected</span>
+              </div>
+              <p className="text-slate-600 mb-3 text-[11px] leading-relaxed">
+                You have a saved setup draft for <strong>{savedWizardDraft.wizardOrgName || 'My Business'}</strong> (Step {savedWizardDraft.wizardStep || 1} of 5).
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleResumeWizard}
+                  className="rounded-xl bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-emerald-700 transition"
+                >
+                  Resume Setup
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDiscardWizard}
+                  className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition"
+                >
+                  Start Over
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Login Form */}
           <form onSubmit={handleLoginSubmit} className="space-y-4 text-xs">
@@ -1234,78 +1568,133 @@ export default function App() {
                 </div>
               )}
 
-              {/* STEP 4: Cloud Sync Setup (Optional) */}
+              {/* STEP 4: Cloud Sync Setup (Mandatory) */}
               {wizardStep === 4 && (
                 <div className="space-y-4">
                   <div className="border-b border-slate-100 pb-2">
-                    <h3 className="font-bold text-slate-900 text-sm">Step 4: Cloud Sync Connection (Optional)</h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-bold text-slate-900 text-sm">Step 4: Cloud Sync Setup (Mandatory)</h3>
+                      <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 uppercase">
+                        Required
+                      </span>
+                    </div>
                     <p className="text-xs text-slate-500">
-                      Sync published schedules to your own database. 100% optional—leave disabled for local-only storage.
+                      Connect your Supabase or Firebase project (or use the built-in Local Relay). Connection must be tested and verified before proceeding.
                     </p>
                   </div>
 
-                  <div className="flex items-center justify-between rounded-2xl border border-slate-200 p-4">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-3">
                     <div>
-                      <p className="font-bold text-xs text-slate-900">Enable Cloud Database Sync</p>
-                      <p className="text-[11px] text-slate-500">
-                        Automatically pushes sanitized schedules when you click &quot;Publish Schedule&quot;.
-                      </p>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Sync Provider</label>
+                      <select
+                        value={wizardCloudProvider}
+                        onChange={(e) => {
+                          setWizardCloudProvider(e.target.value as any);
+                          setIsCloudTested(false);
+                          setCloudTestMessage('');
+                        }}
+                        className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-xs text-slate-900 font-medium"
+                      >
+                        <option value="supabase">Supabase (PostgreSQL / Realtime)</option>
+                        <option value="firebase">Firebase Firestore</option>
+                        <option value="local_relay">Local Relay Sandbox (Pre-configured)</option>
+                      </select>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setWizardCloudSyncEnabled(!wizardCloudSyncEnabled)}
-                      className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                        wizardCloudSyncEnabled
-                          ? 'bg-emerald-600 text-white'
-                          : 'bg-slate-100 text-slate-700 border border-slate-200'
-                      }`}
-                    >
-                      {wizardCloudSyncEnabled ? 'Enabled' : 'Disabled'}
-                    </button>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Project URL / API Endpoint</label>
+                      <input
+                        type="text"
+                        value={wizardCloudProjectUrl}
+                        onChange={(e) => {
+                          setWizardCloudProjectUrl(e.target.value);
+                          setIsCloudTested(false);
+                          setCloudTestMessage('');
+                        }}
+                        placeholder={
+                          wizardCloudProvider === 'supabase'
+                            ? 'https://your-project.supabase.co'
+                            : wizardCloudProvider === 'firebase'
+                            ? 'https://firestore.googleapis.com/v1/projects/your-project'
+                            : 'https://relay.openschedule.local'
+                        }
+                        className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-xs text-slate-900 font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">API Key / Anon Public Key</label>
+                      <input
+                        type="password"
+                        value={wizardCloudApiKey}
+                        onChange={(e) => {
+                          setWizardCloudApiKey(e.target.value);
+                          setIsCloudTested(false);
+                          setCloudTestMessage('');
+                        }}
+                        placeholder="eyJhbGciOi..."
+                        className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-xs text-slate-900 font-mono"
+                      />
+                    </div>
+
+                    <div className="pt-1 flex flex-wrap items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        disabled={isCloudTesting}
+                        onClick={async () => {
+                          setIsCloudTesting(true);
+                          setWizardError('');
+                          const res = await testCloudConnection(wizardCloudProvider, wizardCloudProjectUrl, wizardCloudApiKey);
+                          setIsCloudTesting(false);
+                          if (res.success) {
+                            setIsCloudTested(true);
+                            setCloudTestMessage(res.message);
+                          } else {
+                            setIsCloudTested(false);
+                            setWizardError(res.message);
+                          }
+                        }}
+                        className={`flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold shadow-xs transition ${
+                          isCloudTested
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-slate-900 hover:bg-slate-800 text-white'
+                        }`}
+                      >
+                        {isCloudTesting ? (
+                          <>
+                            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                            <span>Verifying...</span>
+                          </>
+                        ) : isCloudTested ? (
+                          <>
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            <span>✓ Connection Verified!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Globe className="h-3.5 w-3.5" />
+                            <span>Test Cloud Connection</span>
+                          </>
+                        )}
+                      </button>
+
+                      {isCloudTested && (
+                        <span className="text-[11px] font-semibold text-emerald-700">
+                          Ready for Step 5
+                        </span>
+                      )}
+                    </div>
+
+                    {cloudTestMessage && (
+                      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-2.5 text-[11px] font-medium text-emerald-800">
+                        {cloudTestMessage}
+                      </div>
+                    )}
+
+                    <div className="rounded-xl bg-white border border-slate-200 p-2.5 text-[11px] text-slate-600">
+                      🔒 <strong>Privacy Guard:</strong> All employee PINs, password hashes, wage rates, and phone numbers are automatically stripped before sending data to any cloud database.
+                    </div>
                   </div>
-
-                  {wizardCloudSyncEnabled && (
-                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4 space-y-3">
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 mb-1">Sync Provider</label>
-                        <select
-                          value={wizardCloudProvider}
-                          onChange={(e) => setWizardCloudProvider(e.target.value as any)}
-                          className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-xs text-slate-900"
-                        >
-                          <option value="supabase">Supabase</option>
-                          <option value="firebase">Firebase Firestore</option>
-                          <option value="local_relay">Local Relay / HTTP Endpoint</option>
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 mb-1">Project URL / API Endpoint</label>
-                        <input
-                          type="text"
-                          value={wizardCloudProjectUrl}
-                          onChange={(e) => setWizardCloudProjectUrl(e.target.value)}
-                          placeholder="https://xyz.supabase.co"
-                          className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-xs text-slate-900"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 mb-1">Public API Key</label>
-                        <input
-                          type="password"
-                          value={wizardCloudApiKey}
-                          onChange={(e) => setWizardCloudApiKey(e.target.value)}
-                          placeholder="eyJhbGciOi..."
-                          className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-xs text-slate-900"
-                        />
-                      </div>
-
-                      <div className="rounded-xl bg-white border border-emerald-200 p-2.5 text-[11px] text-emerald-800">
-                        🔒 <strong>Privacy Guard Active:</strong> All employee PINs, password hashes, wage rates, and phone numbers are automatically stripped before sending data to any external cloud database.
-                      </div>
-                    </div>
-                  )}
                 </div>
               )}
 
@@ -1400,6 +1789,10 @@ export default function App() {
                       }
                       if (wizardStep === 2 && !wizardManagerPassword.trim()) {
                         setWizardError('Please enter a manager password.');
+                        return;
+                      }
+                      if (wizardStep === 4 && !isCloudTested) {
+                        setWizardError('Please click "Test Cloud Connection" and verify your connection before proceeding to Step 5.');
                         return;
                       }
                       setWizardStep(wizardStep + 1);
@@ -1550,11 +1943,72 @@ export default function App() {
       {!isSplitScreen && (
         <div className="no-print flex items-center justify-between border-b border-slate-200 bg-white px-6 py-2 text-xs shadow-xs">
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 font-bold text-slate-900">
-              <div className="h-6 w-6 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-700">
-                <Building2 className="h-3.5 w-3.5" />
+            {/* Multi-Workspace Switcher Dropdown */}
+            <div className="relative flex items-center gap-1.5">
+              <div className="flex items-center gap-2 font-bold text-slate-900 bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 rounded-xl border border-slate-200 transition">
+                <div className="h-6 w-6 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-700">
+                  <Building2 className="h-3.5 w-3.5" />
+                </div>
+                <select
+                  value={state.orgId || currentOrgId}
+                  onChange={(e) => {
+                    if (e.target.value === '__add_new__') {
+                      setIsSetupWizardOpen(true);
+                      setWizardStep(1);
+                    } else {
+                      handleSwitchWorkspace(e.target.value);
+                    }
+                  }}
+                  className="bg-transparent font-bold text-xs text-slate-900 focus:outline-none cursor-pointer pr-1"
+                >
+                  {Object.entries(workspaces).map(([id, ws]) => (
+                    <option key={id} value={id}>
+                      {ws.settings.orgName}
+                    </option>
+                  ))}
+                  <option value="__add_new__">+ Add / Switch Business</option>
+                </select>
               </div>
-              <span>{state.settings.orgName}</span>
+            </div>
+
+            {/* Network Resilience Status Pill */}
+            <div
+              className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border ${
+                !isOnline
+                  ? 'bg-rose-50 text-rose-800 border-rose-200'
+                  : reconnectedBanner
+                  ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                  : getIsDirty()
+                  ? 'bg-amber-50 text-amber-800 border-amber-200'
+                  : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+              }`}
+              title={
+                !isOnline
+                  ? 'Network connection lost. Changes saved locally in browser.'
+                  : 'Real-time synchronization status'
+              }
+            >
+              {!isOnline ? (
+                <>
+                  <WifiOff className="h-3 w-3 text-rose-600" />
+                  <span>Working Offline</span>
+                </>
+              ) : reconnectedBanner ? (
+                <>
+                  <Wifi className="h-3 w-3 text-emerald-600" />
+                  <span>Reconnected</span>
+                </>
+              ) : getIsDirty() ? (
+                <>
+                  <RefreshCw className="h-3 w-3 text-amber-600 animate-spin" />
+                  <span>Unsaved Changes</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                  <span>Online & Clean</span>
+                </>
+              )}
             </div>
 
             <div className="flex rounded-lg border border-slate-200 p-0.5 bg-slate-100">
@@ -1645,7 +2099,7 @@ export default function App() {
           <div className="flex-1 lg:w-[65%] border-r border-slate-200 overflow-y-auto bg-slate-50">
             <ManagerDashboard
               state={state}
-              onUpdateState={setState}
+              onUpdateState={handleUpdateState}
               onOpenPluginModal={() => setIsPluginModalOpen(true)}
               gpsSimMeters={gpsSimMeters}
               onSimulateTamperAttack={handleSimulateTamperAttack}
@@ -1685,11 +2139,21 @@ export default function App() {
                   <StaffMobileView
                     state={state}
                     currentEmployee={simulatorEmployee}
+                    workspaces={workspaces}
+                    onSwitchWorkspace={handleSwitchWorkspace}
                     onUpdateEmployee={(updated) => {
-                      setState({
-                        ...state,
-                        employees: state.employees.map((e) => (e.id === updated.id ? updated : e)),
-                      });
+                      handleUpdateState(
+                        {
+                          ...state,
+                          employees: state.employees.map((e) => (e.id === updated.id ? updated : e)),
+                        },
+                        {
+                          name: updated.name,
+                          role: 'staff',
+                          action: 'PROFILE_UPDATED',
+                          details: `${updated.name} updated account information`,
+                        }
+                      );
                     }}
                     onRecordPunch={handleRecordPunch}
                     onClaimShift={handleClaimShift}
@@ -1712,7 +2176,7 @@ export default function App() {
           {appMode === 'manager' && (
             <ManagerDashboard
               state={state}
-              onUpdateState={setState}
+              onUpdateState={handleUpdateState}
               onOpenPluginModal={() => setIsPluginModalOpen(true)}
               gpsSimMeters={gpsSimMeters}
               onSimulateTamperAttack={handleSimulateTamperAttack}
@@ -1723,11 +2187,21 @@ export default function App() {
             <StaffMobileView
               state={state}
               currentEmployee={currentEmployee}
+              workspaces={workspaces}
+              onSwitchWorkspace={handleSwitchWorkspace}
               onUpdateEmployee={(updated) => {
-                setState({
-                  ...state,
-                  employees: state.employees.map((e) => (e.id === updated.id ? updated : e)),
-                });
+                handleUpdateState(
+                  {
+                    ...state,
+                    employees: state.employees.map((e) => (e.id === updated.id ? updated : e)),
+                  },
+                  {
+                    name: updated.name,
+                    role: 'staff',
+                    action: 'PROFILE_UPDATED',
+                    details: `${updated.name} updated account information`,
+                  }
+                );
                 setCurrentEmployee(updated);
               }}
               onRecordPunch={handleRecordPunch}
@@ -1739,6 +2213,8 @@ export default function App() {
               onSendMessage={handleSendMessage}
               onStaffLogout={() => setIsLoggedIn(false)}
               gpsSimMeters={gpsSimMeters}
+              workspaces={workspaces}
+              onSwitchWorkspace={handleSwitchWorkspace}
             />
           )}
 
@@ -1753,13 +2229,74 @@ export default function App() {
         </div>
       )}
 
+      {/* CLOUD SYNC CONFLICT RESOLUTION MODAL */}
+      {syncConflict && syncConflict.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+            <div className="flex items-center gap-3 text-amber-600 mb-3">
+              <ShieldAlert className="h-6 w-6" />
+              <h3 className="text-base font-bold text-slate-900">
+                Cloud Backup Conflict Detected
+              </h3>
+            </div>
+            <p className="text-xs text-slate-600 mb-4 leading-relaxed">
+              A newer version of your business schedule was detected in the cloud backup slot. Choose how you would like to resolve the difference:
+            </p>
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 mb-5 space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-slate-500 font-medium">Remote Cloud Version:</span>
+                <span className="font-bold text-slate-900">
+                  {new Date(syncConflict.cloudVersionTimestampMs).toLocaleTimeString()} by {syncConflict.cloudLastModifiedBy}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500 font-medium">Your Local Version:</span>
+                <span className="font-bold text-slate-900">
+                  {new Date(syncConflict.localVersionTimestampMs).toLocaleTimeString()} (Current Device)
+                </span>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  handleUpdateState(syncConflict.cloudState);
+                  setSyncConflict(null);
+                  showToast('✓ Accepted latest cloud version.');
+                }}
+                className="rounded-xl bg-emerald-600 hover:bg-emerald-700 px-4 py-2 text-xs font-bold text-white shadow-xs"
+              >
+                Accept Cloud Version
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await atomicCloudWrite(state);
+                    setSyncConflict(null);
+                    showToast('✓ Overwrote cloud backup with local schedule.');
+                  } catch (err: any) {
+                    showToast(`Error: ${err.message}`);
+                  }
+                }}
+                className="rounded-xl border border-slate-300 bg-white hover:bg-slate-50 px-4 py-2 text-xs font-bold text-slate-700"
+              >
+                Overwrite Cloud with Local Version
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* PLUGIN MODAL */}
       <PluginModal
         isOpen={isPluginModalOpen}
         onClose={() => setIsPluginModalOpen(false)}
         state={state}
         onUpdatePlugins={(updatedPlugins) => {
-          setState({
+          handleUpdateState({
             ...state,
             plugins: updatedPlugins,
           });

@@ -117,7 +117,7 @@ export const SmartNumberInput: React.FC<SmartNumberInputProps> = ({
         aria-label={ariaLabel}
         placeholder={placeholder}
         step={step}
-        className={`w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600 disabled:bg-slate-100 disabled:text-slate-400 ${
+        className={`w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-mono tabular-nums text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600 disabled:bg-slate-100 disabled:text-slate-400 ${
           prefix ? 'pl-7' : ''
         } ${suffix ? 'pr-8' : ''} ${className}`}
       />

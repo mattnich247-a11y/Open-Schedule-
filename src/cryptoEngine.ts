@@ -171,6 +171,15 @@ export async function decryptVault(
 }
 
 /**
+ * General SHA-256 Digest Helper for file/payload integrity & checksums
+ */
+export async function computeSha256(text: string): Promise<string> {
+  const enc = new TextEncoder();
+  const digestBuffer = await subtle.digest('SHA-256', enc.encode(text));
+  return bytesToHex(new Uint8Array(digestBuffer));
+}
+
+/**
  * Compute SHA-256 Punch Hash for Tamper-Evident Ledger:
  * prevHash + employeeId + shiftId + punchType + timestampIso
  */

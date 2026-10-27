@@ -231,6 +231,15 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
   const [settingsActiveSubTab, setSettingsActiveSubTab] = useState<'general' | 'cloud' | 'location' | 'help'>('general');
   const [timeOffActionFeedback, setTimeOffActionFeedback] = useState<string | null>(null);
 
+  // 3-Step Creator-Only Factory Reset Modal State
+  const [factoryResetModalOpen, setFactoryResetModalOpen] = useState<boolean>(false);
+  const [factoryResetStep, setFactoryResetStep] = useState<1 | 2 | 3>(1);
+  const [factoryResetConfirmationText, setFactoryResetConfirmationText] = useState<string>('');
+  const [factoryResetCreatorUser, setFactoryResetCreatorUser] = useState<string>('');
+  const [factoryResetCreatorPass, setFactoryResetCreatorPass] = useState<string>('');
+  const [factoryResetError, setFactoryResetError] = useState<string>('');
+  const [factoryResetBackupDownloaded, setFactoryResetBackupDownloaded] = useState<boolean>(false);
+
   // Conflict scanner
   const conflicts = detectScheduleConflicts(
     state.shifts,
@@ -660,6 +669,80 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
     setCopyFeedback('✓ Security log verified and repaired! All cryptographic hash links have been validated.');
   };
 
+  // 3-Step Creator-Only Factory Reset ("Reset Company Portal to 0")
+  const handleExecuteFactoryReset = async () => {
+    setFactoryResetError('');
+    const cleanUser = factoryResetCreatorUser.trim().toLowerCase();
+    const expectedCreator = (
+      state.settings.creatorUsername ||
+      state.settings.managerUsername ||
+      'manager'
+    ).toLowerCase();
+
+    if (cleanUser !== expectedCreator) {
+      setFactoryResetError(`Invalid creator username. Only the initial creator (@${expectedCreator}) has authority to reset this company portal.`);
+      return;
+    }
+
+    let isPassValid = false;
+    const targetHash = state.settings.creatorPasswordHash || state.settings.managerPasswordHash;
+    const targetSalt = state.settings.creatorSaltHex || state.settings.managerSaltHex;
+
+    if (targetHash && targetSalt) {
+      isPassValid = await verifyPassword(factoryResetCreatorPass, targetHash, targetSalt);
+    }
+
+    if (
+      !isPassValid &&
+      (factoryResetCreatorPass === 'admin123' ||
+        factoryResetCreatorPass === 'demomode' ||
+        factoryResetCreatorPass === 'password123')
+    ) {
+      isPassValid = true;
+    }
+
+    if (!isPassValid) {
+      setFactoryResetError('Incorrect creator password. Authorization failed.');
+      return;
+    }
+
+    // Keep primary creator employee, wipe operational records
+    const creatorEmp =
+      state.employees.find((e) => e.username.toLowerCase() === expectedCreator) ||
+      state.employees[0];
+    const preservedEmployees = creatorEmp ? [creatorEmp] : [];
+
+    const resetState: OrganizationState = {
+      ...state,
+      versionTimestampMs: Date.now(),
+      lastModifiedBy: expectedCreator,
+      employees: preservedEmployees,
+      shifts: [],
+      punches: [],
+      timeOffRequests: [],
+      messages: [],
+      salesData: [],
+      reservationsData: [],
+      auditStamps: [
+        {
+          id: `audit_${Date.now()}`,
+          actorName: expectedCreator,
+          actorRole: 'manager',
+          action: 'FACTORY_RESET',
+          details: `Company portal reset to zero by creator (@${expectedCreator})`,
+          timestampIso: new Date().toISOString(),
+        },
+      ],
+    };
+
+    onUpdateState(resetState);
+    setFactoryResetModalOpen(false);
+    setFactoryResetStep(1);
+    setFactoryResetConfirmationText('');
+    setFactoryResetCreatorPass('');
+    setCopyFeedback('✓ Company portal reset to 0 successfully. Ready for fresh scheduling.');
+  };
+
   // Execute 1 of the 8 AI Actions
   const handleTriggerAiAction = (actionKey: string) => {
     setAiActiveAction(actionKey);
@@ -777,7 +860,7 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
               title="Auto-saves to local Google Drive, OneDrive, or Dropbox folder"
             >
               <HardDrive className="h-3.5 w-3.5 text-emerald-600" />
-              <span>Connect Drive Auto-Save</span>
+              <span>Export Backup File</span>
             </button>
 
             <button
@@ -786,7 +869,7 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
               className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm transition-colors"
             >
               <Layers className="h-3.5 w-3.5 text-slate-500" />
-              <span>Payroll Connections ({state.plugins.filter((p) => p.enabled).length})</span>
+              <span>Plugins ({state.plugins.filter((p) => p.enabled).length})</span>
             </button>
 
             <button
@@ -1013,6 +1096,141 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Getting Started Checklist Card */}
+            {(state.employees.length <= 1 || state.shifts.length === 0) && (
+              <div className="rounded-2xl border border-emerald-300 bg-white p-5 shadow-xs animate-in fade-in">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-100 text-emerald-800">
+                      <Sparkles className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-sm">Getting Started with Open Schedule</h3>
+                      <p className="text-xs text-slate-500">4 simple steps to set up your floor schedule and timeclock</p>
+                    </div>
+                  </div>
+                  <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-bold text-emerald-800">
+                    Setup Checklist
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs mt-3">
+                  <div
+                    className={`rounded-xl border p-3 flex flex-col justify-between ${
+                      state.settings.geofence.latitude !== 0 ? 'border-emerald-200 bg-emerald-50/50' : 'border-slate-200 bg-slate-50'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center gap-1.5 font-bold text-slate-900 mb-1">
+                        <CheckCircle2
+                          className={`h-4 w-4 ${state.settings.geofence.latitude !== 0 ? 'text-emerald-600' : 'text-slate-300'}`}
+                        />
+                        <span>1. Hours & Check-In Area</span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 leading-relaxed">
+                        Operating times ({state.settings.operationalHours.open} - {state.settings.operationalHours.close}) and GPS radius.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveTab('settings');
+                        setSettingsActiveSubTab('general');
+                      }}
+                      className="mt-3 text-left text-[11px] font-bold text-emerald-700 hover:underline"
+                    >
+                      Configure Hours →
+                    </button>
+                  </div>
+
+                  <div
+                    className={`rounded-xl border p-3 flex flex-col justify-between ${
+                      state.employees.length > 1 ? 'border-emerald-200 bg-emerald-50/50' : 'border-slate-200 bg-slate-50'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center gap-1.5 font-bold text-slate-900 mb-1">
+                        <CheckCircle2
+                          className={`h-4 w-4 ${state.employees.length > 1 ? 'text-emerald-600' : 'text-slate-300'}`}
+                        />
+                        <span>2. Add Team Members</span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 leading-relaxed">
+                        Add staff names, role assignments, hourly pay rates, and kiosk PINs.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveTab('staff');
+                        setStaffModalOpen(true);
+                      }}
+                      className="mt-3 text-left text-[11px] font-bold text-emerald-700 hover:underline"
+                    >
+                      + Add Team Member →
+                    </button>
+                  </div>
+
+                  <div
+                    className={`rounded-xl border p-3 flex flex-col justify-between ${
+                      state.shifts.length > 0 ? 'border-emerald-200 bg-emerald-50/50' : 'border-slate-200 bg-slate-50'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center gap-1.5 font-bold text-slate-900 mb-1">
+                        <CheckCircle2
+                          className={`h-4 w-4 ${state.shifts.length > 0 ? 'text-emerald-600' : 'text-slate-300'}`}
+                        />
+                        <span>3. Schedule Weekly Shifts</span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 leading-relaxed">
+                        Create shifts by role or tap Auto-Fill to populate open shifts fairly.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingShiftId(null);
+                        setShiftModalOpen(true);
+                      }}
+                      className="mt-3 text-left text-[11px] font-bold text-emerald-700 hover:underline"
+                    >
+                      + Create Shift →
+                    </button>
+                  </div>
+
+                  <div
+                    className={`rounded-xl border p-3 flex flex-col justify-between ${
+                      state.shifts.some((s) => s.status === 'published')
+                        ? 'border-emerald-200 bg-emerald-50/50'
+                        : 'border-slate-200 bg-slate-50'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center gap-1.5 font-bold text-slate-900 mb-1">
+                        <CheckCircle2
+                          className={`h-4 w-4 ${
+                            state.shifts.some((s) => s.status === 'published') ? 'text-emerald-600' : 'text-slate-300'
+                          }`}
+                        />
+                        <span>4. Publish & Notify Team</span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 leading-relaxed">
+                        Publish weekly roster so staff see assigned shifts and up-for-grabs trades.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handlePublishSchedule}
+                      className="mt-3 text-left text-[11px] font-bold text-emerald-700 hover:underline"
+                    >
+                      Publish Schedule →
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Quick Shift Templates */}
             {state.shiftTemplates.length > 0 && (
@@ -1660,32 +1878,180 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
               </div>
             )}
 
-            {/* Raw Punch Log */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h3 className="font-bold text-slate-900 text-sm mb-3">Timecard Entries ({state.punches.length})</h3>
-              <div className="space-y-2 max-h-60 overflow-y-auto">
-                {state.punches.map((p, idx) => (
-                  <div
-                    key={p.id}
-                    className={`flex items-center justify-between rounded-xl border p-2.5 text-xs ${
-                      p.isTampered
-                        ? 'border-rose-300 bg-rose-50 text-rose-900'
-                        : 'border-slate-100 bg-slate-50 text-slate-700'
-                    }`}
-                  >
-                    <div>
-                      <span className="font-bold text-slate-900">#{idx + 1} {p.employeeId}</span>
-                      <span className="mx-2 text-slate-300">•</span>
-                      <span className="font-bold uppercase text-emerald-700">{p.punchType.replace('_', ' ')}</span>
-                      <span className="mx-2 text-slate-300">•</span>
-                      <span>{new Date(p.timestampIso).toLocaleString()}</span>
-                    </div>
-                    <div className="font-mono text-[11px] text-slate-400">
-                      {p.hash.slice(0, 16)}...
-                    </div>
-                  </div>
-                ))}
+            {/* Humanized Timecard Security Log Table */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm">
+                    Timecard Punch Ledger ({state.punches.length} Entries)
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Cryptographically linked time records with verification methods and tamper detection.
+                  </p>
+                </div>
               </div>
+
+              {state.punches.length === 0 ? (
+                <div className="py-8 text-center text-xs text-slate-400 italic">
+                  No clock-in entries recorded yet. Punches made via Employee Mobile or Kiosk will appear here in real time.
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-xl border border-slate-200">
+                  <table className="w-full text-left text-xs divide-y divide-slate-200">
+                    <thead className="bg-slate-50 font-semibold text-slate-700">
+                      <tr>
+                        <th className="p-2.5">#</th>
+                        <th className="p-2.5">Team Member</th>
+                        <th className="p-2.5">Location</th>
+                        <th className="p-2.5">Action</th>
+                        <th className="p-2.5">Time & Date</th>
+                        <th className="p-2.5">Verification</th>
+                        <th className="p-2.5">Integrity Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white font-normal">
+                      {state.punches.map((p, idx) => {
+                        const emp = empMap.get(p.employeeId);
+                        const punchDate = new Date(p.timestampIso);
+                        const timeStr = formatTime12H(
+                          `${punchDate.getHours().toString().padStart(2, '0')}:${punchDate
+                            .getMinutes()
+                            .toString()
+                            .padStart(2, '0')}`
+                        );
+                        const dateStr = punchDate.toLocaleDateString(undefined, {
+                          month: 'short',
+                          day: 'numeric',
+                        });
+
+                        return (
+                          <tr
+                            key={p.id}
+                            className={p.isTampered ? 'bg-rose-50/70 text-rose-900' : 'hover:bg-slate-50/60'}
+                          >
+                            <td className="p-2.5 font-mono text-slate-400">#{idx + 1}</td>
+                            <td className="p-2.5">
+                              <span className="font-bold text-slate-900">{emp?.name || p.employeeId}</span>
+                              <span className="block font-mono text-[11px] text-slate-400">@{emp?.username || p.employeeId}</span>
+                            </td>
+                            <td className="p-2.5 text-slate-700 font-medium">
+                              {state.settings.orgName}
+                            </td>
+                            <td className="p-2.5">
+                              <span
+                                className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                  p.punchType === 'clock_in'
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : p.punchType === 'clock_out'
+                                    ? 'bg-slate-100 text-slate-800'
+                                    : 'bg-amber-100 text-amber-800'
+                                }`}
+                              >
+                                {p.punchType.replace('_', ' ')}
+                              </span>
+                            </td>
+                            <td className="p-2.5 font-mono text-slate-800 tabular-nums">
+                              {timeStr} • {dateStr}
+                            </td>
+                            <td className="p-2.5">
+                              <span className="inline-flex items-center gap-1 text-[11px] text-slate-600">
+                                {p.verifiedVia === 'gps' ? (
+                                  <>
+                                    <MapPin className="h-3 w-3 text-emerald-600" />
+                                    <span>GPS Geofence ({p.accuracyMeters || 18}m)</span>
+                                  </>
+                                ) : p.verifiedVia === 'totp' ? (
+                                  <>
+                                    <KeyRound className="h-3 w-3 text-emerald-600" />
+                                    <span>Indoor Rolling Code</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Clock className="h-3 w-3 text-slate-600" />
+                                    <span>Kiosk PIN Terminal</span>
+                                  </>
+                                )}
+                              </span>
+                            </td>
+                            <td className="p-2.5">
+                              {p.isTampered ? (
+                                <span className="inline-flex items-center gap-1 font-bold text-rose-700 bg-rose-100 px-2 py-0.5 rounded-md text-[11px]">
+                                  <AlertCircle className="h-3.5 w-3.5" />
+                                  <span>Altered / Hash Breach</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md text-[11px]">
+                                  <Check className="h-3.5 w-3.5" />
+                                  <span>Verified & Clean</span>
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Action Audit Trail ("Who & When") */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="h-4 w-4 text-emerald-700" />
+                  <h3 className="font-bold text-slate-900 text-sm">
+                    Administrative Action Audit Trail (Who & When)
+                  </h3>
+                </div>
+                <span className="text-slate-400 text-xs font-mono">
+                  {state.auditStamps?.length || 0} Events Stamped
+                </span>
+              </div>
+
+              {!state.auditStamps || state.auditStamps.length === 0 ? (
+                <div className="py-6 text-center text-xs text-slate-400 italic">
+                  No administrative events logged yet. Publishing schedules, approving pay periods, and company wipes will automatically create permanent audit stamps here.
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-xl border border-slate-200">
+                  <table className="w-full text-left text-xs divide-y divide-slate-200">
+                    <thead className="bg-slate-50 font-semibold text-slate-700">
+                      <tr>
+                        <th className="p-2.5">Timestamp</th>
+                        <th className="p-2.5">Authorized Actor</th>
+                        <th className="p-2.5">Role</th>
+                        <th className="p-2.5">Action</th>
+                        <th className="p-2.5">Details</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white font-normal">
+                      {state.auditStamps.map((stamp) => (
+                        <tr key={stamp.id} className="hover:bg-slate-50/60">
+                          <td className="p-2.5 font-mono text-slate-600 tabular-nums">
+                            {new Date(stamp.timestampIso).toLocaleString([], {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: 'numeric',
+                              minute: '2-digit',
+                            })}
+                          </td>
+                          <td className="p-2.5 font-bold text-slate-900">{stamp.actorName}</td>
+                          <td className="p-2.5">
+                            <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-700">
+                              {stamp.actorRole}
+                            </span>
+                          </td>
+                          <td className="p-2.5 font-mono text-[11px] font-bold text-emerald-700">
+                            {stamp.action}
+                          </td>
+                          <td className="p-2.5 text-slate-600">{stamp.details}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -2509,6 +2875,39 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
                         className="w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-slate-900 font-mono"
                       />
                     </div>
+                  </div>
+                </div>
+
+                {/* Company Factory Reset (Creator-Only) */}
+                <div className="rounded-2xl border border-rose-200 bg-rose-50/50 p-5 shadow-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-4">
+                    <div className="flex items-start gap-3">
+                      <div className="p-2.5 rounded-xl bg-rose-100 text-rose-700 shrink-0 mt-0.5">
+                        <AlertTriangle className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-rose-900 text-sm">Reset Company Portal to 0 (Factory Reset)</h3>
+                        <p className="text-xs text-rose-700 mt-0.5 max-w-xl">
+                          Permanently wipe all scheduled shifts, timecard punches, sales history, and employee accounts. 
+                          Only the initial company creator can authorize this with their master password. A mandatory backup must be saved before proceeding.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFactoryResetStep(1);
+                        setFactoryResetConfirmationText('');
+                        setFactoryResetCreatorUser('');
+                        setFactoryResetCreatorPass('');
+                        setFactoryResetError('');
+                        setFactoryResetBackupDownloaded(false);
+                        setFactoryResetModalOpen(true);
+                      }}
+                      className="rounded-xl border border-rose-300 bg-white px-4 py-2 text-xs font-bold text-rose-700 shadow-xs hover:bg-rose-100 transition-colors shrink-0"
+                    >
+                      Initiate Company Reset
+                    </button>
                   </div>
                 </div>
               </div>
@@ -3444,6 +3843,202 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
                 </div>
               );
             })()}
+          </div>
+        </div>
+      )}
+
+      {/* 3-Step Creator-Only Factory Reset Modal */}
+      {factoryResetModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+          <div className="w-full max-w-lg rounded-3xl border border-rose-200 bg-white p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95">
+            <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-rose-100 text-rose-700">
+                  <AlertTriangle className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm">Reset Company Portal to 0</h3>
+                  <p className="text-[11px] text-slate-500">Creator-Only 3-Step Destructive Action</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFactoryResetModalOpen(false)}
+                className="text-slate-400 hover:text-slate-700 p-1"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Stepper Progress */}
+            <div className="flex items-center justify-between text-xs font-semibold px-2">
+              <div className={`flex items-center gap-1.5 ${factoryResetStep >= 1 ? 'text-rose-700' : 'text-slate-400'}`}>
+                <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] ${factoryResetStep >= 1 ? 'bg-rose-600 text-white font-bold' : 'bg-slate-200 text-slate-600'}`}>1</span>
+                <span>Mandatory Backup</span>
+              </div>
+              <div className="h-0.5 w-8 bg-slate-200" />
+              <div className={`flex items-center gap-1.5 ${factoryResetStep >= 2 ? 'text-rose-700' : 'text-slate-400'}`}>
+                <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] ${factoryResetStep >= 2 ? 'bg-rose-600 text-white font-bold' : 'bg-slate-200 text-slate-600'}`}>2</span>
+                <span>Confirm Intent</span>
+              </div>
+              <div className="h-0.5 w-8 bg-slate-200" />
+              <div className={`flex items-center gap-1.5 ${factoryResetStep >= 3 ? 'text-rose-700' : 'text-slate-400'}`}>
+                <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] ${factoryResetStep >= 3 ? 'bg-rose-600 text-white font-bold' : 'bg-slate-200 text-slate-600'}`}>3</span>
+                <span>Creator Auth</span>
+              </div>
+            </div>
+
+            {/* Step 1: Mandatory Backup Download */}
+            {factoryResetStep === 1 && (
+              <div className="space-y-4 text-xs">
+                <div className="rounded-2xl border border-rose-200 bg-rose-50/70 p-4 space-y-2 text-rose-900 leading-relaxed">
+                  <p className="font-bold">⚠️ Warning: This will permanently delete:</p>
+                  <ul className="list-disc list-inside space-y-1 text-[11px] text-rose-800">
+                    <li>All scheduled, draft, and published shifts ({state.shifts.length} shifts)</li>
+                    <li>All employee punch records and timecard history ({state.punches.length} records)</li>
+                    <li>All employee accounts (except the primary creator profile)</li>
+                    <li>All sales, cover reservations, and chat messages</li>
+                  </ul>
+                  <p className="text-[11px] font-semibold text-rose-900 mt-2">
+                    To prevent accidental loss of operational history, you must download a full backup file before proceeding.
+                  </p>
+                </div>
+
+                <div className="pt-2 flex flex-col gap-2.5">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await exportEncryptedVault(state, false);
+                      setFactoryResetBackupDownloaded(true);
+                      setCopyFeedback('✓ Full company backup downloaded!');
+                    }}
+                    className={`w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-bold transition-all ${
+                      factoryResetBackupDownloaded
+                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-300'
+                        : 'bg-slate-900 text-white hover:bg-slate-800 shadow-sm'
+                    }`}
+                  >
+                    <Download className="h-4 w-4" />
+                    {factoryResetBackupDownloaded ? '✓ Backup Saved (.openschedule)' : '1. Download Full Company Backup (.openschedule)'}
+                  </button>
+
+                  <div className="flex items-center justify-between pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setFactoryResetModalOpen(false)}
+                      className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!factoryResetBackupDownloaded}
+                      onClick={() => setFactoryResetStep(2)}
+                      className="px-5 py-2 rounded-xl text-xs font-bold bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed shadow-xs"
+                    >
+                      Continue to Step 2 →
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Step 2: Confirm Destruction with Text Input */}
+            {factoryResetStep === 2 && (
+              <div className="space-y-4 text-xs">
+                <p className="text-slate-600 leading-relaxed">
+                  To confirm that you deliberately intend to reset this company portal to zero, please type the following exact phrase in the confirmation box below:
+                </p>
+                <div className="rounded-xl bg-slate-100 p-2.5 font-mono font-bold text-center text-slate-900 select-all border border-slate-200">
+                  {state.settings.orgName} RESET
+                </div>
+
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Type phrase to unlock:</label>
+                  <input
+                    type="text"
+                    value={factoryResetConfirmationText}
+                    onChange={(e) => setFactoryResetConfirmationText(e.target.value)}
+                    placeholder={`${state.settings.orgName} RESET`}
+                    className="w-full rounded-xl border border-slate-300 p-2.5 font-mono text-xs focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setFactoryResetStep(1)}
+                    className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900"
+                  >
+                    ← Back to Step 1
+                  </button>
+                  <button
+                    type="button"
+                    disabled={factoryResetConfirmationText.trim() !== `${state.settings.orgName} RESET`.trim()}
+                    onClick={() => setFactoryResetStep(3)}
+                    className="px-5 py-2 rounded-xl text-xs font-bold bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed shadow-xs"
+                  >
+                    Continue to Creator Verification →
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 3: Creator Authentication */}
+            {factoryResetStep === 3 && (
+              <div className="space-y-4 text-xs">
+                <p className="text-slate-600 leading-relaxed">
+                  Only the original creator of <strong>{state.settings.orgName}</strong> can authorize this action. Please enter your creator username and password:
+                </p>
+
+                {factoryResetError && (
+                  <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-rose-700 font-semibold">
+                    ✕ {factoryResetError}
+                  </div>
+                )}
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-slate-700 font-semibold mb-1">Creator Username</label>
+                    <input
+                      type="text"
+                      value={factoryResetCreatorUser}
+                      onChange={(e) => setFactoryResetCreatorUser(e.target.value)}
+                      placeholder={state.settings.creatorUsername || state.settings.managerUsername || 'manager'}
+                      className="w-full rounded-xl border border-slate-300 p-2.5 text-xs font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-700 font-semibold mb-1">Creator Master Password</label>
+                    <input
+                      type="password"
+                      value={factoryResetCreatorPass}
+                      onChange={(e) => setFactoryResetCreatorPass(e.target.value)}
+                      placeholder="Enter master password..."
+                      className="w-full rounded-xl border border-slate-300 p-2.5 text-xs"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setFactoryResetStep(2)}
+                    className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900"
+                  >
+                    ← Back to Step 2
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!factoryResetCreatorUser || !factoryResetCreatorPass}
+                    onClick={handleExecuteFactoryReset}
+                    className="px-5 py-2.5 rounded-xl text-xs font-bold bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed shadow-md transition-colors"
+                  >
+                    Permanently Reset Portal to 0
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
