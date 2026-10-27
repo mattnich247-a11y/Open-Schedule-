@@ -671,18 +671,19 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
 
   // 3-Step Creator-Only Factory Reset ("Reset Company Portal to 0")
   const handleExecuteFactoryReset = async () => {
-    setFactoryResetError('');
-    const cleanUser = factoryResetCreatorUser.trim().toLowerCase();
-    const expectedCreator = (
-      state.settings.creatorUsername ||
-      state.settings.managerUsername ||
-      'manager'
-    ).toLowerCase();
+  setFactoryResetError('');
+  const cleanCreatorUser = factoryResetCreatorUser.trim().toLowerCase(); // Renamed
+  const expectedCreator = (
+    state.settings.creatorUsername ||
+    state.settings.managerUsername ||
+    'manager'
+  ).toLowerCase();
 
-    if (cleanUser !== expectedCreator) {
-      setFactoryResetError(`Invalid creator username. Only the initial creator (@${expectedCreator}) has authority to reset this company portal.`);
-      return;
-    }
+  if (cleanCreatorUser !== expectedCreator) {
+    setFactoryResetError(`Invalid creator username. Only the initial creator (@${expectedCreator}) has authority to reset this company portal.`);
+    return;
+  }
+  
 
     let isPassValid = false;
     const targetHash = state.settings.creatorPasswordHash || state.settings.managerPasswordHash;
@@ -3908,7 +3909,7 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
                   <button
                     type="button"
                     onClick={async () => {
-                      await exportEncryptedVault(state, false);
+                      await exportEncryptedVault(state, 'company_backup_pass_123');
                       setFactoryResetBackupDownloaded(true);
                       setCopyFeedback('✓ Full company backup downloaded!');
                     }}

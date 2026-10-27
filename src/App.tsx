@@ -540,8 +540,20 @@ export default function App() {
 
   // Login Authentication Handler
   const handleLoginSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoginError('');
+  e.preventDefault();
+  setLoginError('');
+  const cleanLoginUser = loginUsername.trim().toLowerCase();
+
+  // 1. Stateless Demo Sandbox Login (Volatile memory only, zero localStorage writes)
+  if (cleanLoginUser === 'demo' && loginPassword === 'demomode') {
+    setIsDemoModeActive(true);
+    setIsLoggedIn(true);
+    setAppMode(loginModeSelect);
+    if (loginModeSelect === 'staff') {
+      setCurrentEmployee(state.employees[0] || null);
+    }
+    return;
+  }
 
     const cleanUser = loginUsername.trim().toLowerCase();
 
@@ -588,7 +600,7 @@ export default function App() {
     }
 
     // 4. Staff Employee Credentials Verification
-    const foundEmp = state.employees.find((e) => e.username.toLowerCase() === cleanUser);
+    const foundEmp = state.employees.find((e) => e.username.toLowerCase() === cleanLoginUser);
     if (foundEmp) {
       const isValid = await verifyPassword(loginPassword, foundEmp.passwordHash, foundEmp.saltHex);
       if (isValid) {
@@ -2184,12 +2196,12 @@ export default function App() {
           )}
 
           {appMode === 'staff' && currentEmployee && (
-            <StaffMobileView
-              state={state}
-              currentEmployee={currentEmployee}
-              workspaces={workspaces}
-              onSwitchWorkspace={handleSwitchWorkspace}
-              onUpdateEmployee={(updated) => {
+  <StaffMobileView
+    state={state}
+    currentEmployee={currentEmployee}
+    workspaces={workspaces}
+    onSwitchWorkspace={handleSwitchWorkspace}
+    onUpdateEmployee={(updated) => {
                 handleUpdateState(
                   {
                     ...state,
@@ -2205,18 +2217,19 @@ export default function App() {
                 setCurrentEmployee(updated);
               }}
               onRecordPunch={handleRecordPunch}
-              onClaimShift={handleClaimShift}
-              onPostShiftUpForGrabs={handlePostShiftUpForGrabs}
-              onAddAvailability={handleAddAvailability}
-              onDeleteAvailability={handleDeleteAvailability}
-              onSubmitTimeOff={handleSubmitTimeOff}
-              onSendMessage={handleSendMessage}
-              onStaffLogout={() => setIsLoggedIn(false)}
-              gpsSimMeters={gpsSimMeters}
-              workspaces={workspaces}
-              onSwitchWorkspace={handleSwitchWorkspace}
-            />
-          )}
+    onClaimShift={handleClaimShift}
+    onPostShiftUpForGrabs={handlePostShiftUpForGrabs}
+    onAddAvailability={handleAddAvailability}
+    onDeleteAvailability={handleDeleteAvailability}
+    onSubmitTimeOff={handleSubmitTimeOff}
+    onSendMessage={handleSendMessage}
+    onStaffLogout={() => setIsLoggedIn(false)}
+    gpsSimMeters={gpsSimMeters}
+    // Remove the duplicate props below if they appear a second time:
+    // workspaces={workspaces}
+    // onSwitchWorkspace={handleSwitchWorkspace}
+  />
+)}
 
           {appMode === 'kiosk' && (
             <KioskTimeclock
