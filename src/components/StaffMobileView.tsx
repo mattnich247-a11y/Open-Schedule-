@@ -969,13 +969,16 @@ export const StaffMobileView: React.FC<StaffMobileViewProps> = ({
                     const role = roleMap.get(shift.roleId);
                     const isMe = emp?.id === currentEmployee.id;
 
+                    // Fallback color if the employee doesn't have one assigned yet
+                    const employeeColor = emp?.color || 'border-slate-200 bg-slate-50/50 text-slate-800';
+
                     return (
                       <div
                         key={shift.id}
                         className={`flex items-center justify-between rounded-xl border p-3 text-xs ${
                           isMe
-                            ? 'border-emerald-300 bg-emerald-50/60'
-                            : 'border-slate-200 bg-slate-50/50'
+                            ? 'border-emerald-300 bg-emerald-50/60 font-semibold'
+                            : employeeColor
                         }`}
                       >
                         <div>
@@ -1083,6 +1086,20 @@ export const StaffMobileView: React.FC<StaffMobileViewProps> = ({
             </div>
           </div>
         )}
+
+        
+
+  {/* Optional Icon */}
+  <button
+  type="button"
+  onClick={() => setActiveTab('availability')}
+  className="mt-4 w-full flex items-center justify-center gap-1 rounded-2xl bg-emerald-600 px-4 py-3.5 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 transition whitespace-nowrap"
+>
+  <span>🌴</span>
+  <span>Request Time Off & PTO</span>
+</button>
+
+  
 
         {/* TAB 5: Availability & Time Off */}
         {activeTab === 'availability' && (
@@ -1321,6 +1338,16 @@ export const StaffMobileView: React.FC<StaffMobileViewProps> = ({
                 </div>
               ) : (
                 filteredMessages.map((msg) => {
+                  const sender = state.employees.find((e) => e.id === msg.senderEmployeeId);
+  const bubbleColor = sender?.color || 'bg-slate-100 text-slate-800';
+  const senderName = sender?.name || msg.senderName || 'Team Member';
+
+  return (
+    <div key={msg.id} className={`rounded-2xl p-3 shadow-sm ${bubbleColor}`}>
+      <div className="font-bold text-[11px] mb-0.5">{sender?.name || 'Unknown'}</div>
+      <p className="text-xs">{msg.text}</p>
+    </div>
+  );
                   const isMe = msg.senderEmployeeId === currentEmployee.id;
                   return (
                     <div

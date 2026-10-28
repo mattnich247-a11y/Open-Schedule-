@@ -65,6 +65,7 @@ import {
   ShiftTemplate,
   SkillTag,
   TimesheetException,
+  TimeOffRequest,
   ToastSalesRecord,
 } from '../types';
 import {
@@ -124,6 +125,34 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
   onSimulateTamperAttack,
 }) => {
   const [activeTab, setActiveTab] = useState<'roster' | 'staff' | 'timesheets' | 'security' | 'ai' | 'chat' | 'settings'>('roster');
+
+  const handleFactoryReset = () => {
+  if (window.confirm("WARNING: This will completely wipe out the company portal, delete all staff accounts, remove usernames/passwords, and reset company settings. Are you sure?")) {
+    // 1. Clear local persistent storage
+    localStorage.removeItem('open_schedule_state_v1');
+    localStorage.clear();
+
+    // 2. Reset to a completely clean, blank initial state
+    const blankState = {
+      settings: {
+        orgName: 'New Company Portal',
+        timezone: 'America/New_York',
+        payPeriodType: 'weekly',
+        requirePinForClock: false,
+      },
+      employees: [], // Completely wipes out staff accounts, usernames, and passwords
+      shifts: [],
+      timePunches: [],
+      timeOffRequests: [],
+      availabilities: [],
+      roles: [],
+    };
+
+    // 3. Trigger state update and reload
+    onUpdateState(blankState as any);
+    window.location.reload();
+  }
+};
 
   // Filters for Roster
   const [filterDept, setFilterDept] = useState<string>('all');
@@ -205,6 +234,36 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
   const [reservationUploadModalOpen, setReservationUploadModalOpen] = useState<boolean>(false);
   const [newCoversCount, setNewCoversCount] = useState<number>(48);
   const [newPartyCount, setNewPartyCount] = useState<number>(14);
+
+// Manager Time-Off Addition Modal State
+const [managerTimeOffModalOpen, setManagerTimeOffModalOpen] = useState<boolean>(false);
+const [mgrToEmployeeId, setMgrToEmployeeId] = useState<string>(state.employees[0]?.id || '');
+const [mgrToStart, setMgrToStart] = useState<string>(weekStart);
+const [mgrToEnd, setMgrToEnd] = useState<string>(weekStart);
+const [mgrToType, setMgrToType] = useState<'vacation' | 'pto' | 'personal'>('vacation');
+const [mgrToPartOfDay, setMgrToPartOfDay] = useState<'full_day' | 'morning_half' | 'night_half'>('full_day');
+const [mgrToReason, setMgrToReason] = useState<string>('Manager scheduled PTO');
+
+const handleManagerSubmitTimeOff = (e: React.FormEvent) => {
+  e.preventDefault();
+  const newReq: TimeOffRequest = {
+    id: `to_mgr_${Date.now()}`,
+    employeeId: mgrToEmployeeId,
+    startDate: mgrToStart,
+    endDate: mgrToEnd,
+    reason: mgrToReason,
+    requestType: mgrToType,
+    partOfDay: mgrToPartOfDay,
+    status: 'approved', // Manager-added time off is pre-approved automatically
+    submittedAtIso: new Date().toISOString(),
+  };
+  onUpdateState({
+    ...state,
+    timeOffRequests: [...state.timeOffRequests, newReq],
+  });
+  setManagerTimeOffModalOpen(false);
+  setCopyFeedback('  Successfully added and approved time-off block for employee.');
+};
 
   // AI Tab 8 Action Buttons State
   const [aiDataAccess, setAiDataAccess] = useState<AiDataAccessOptions>({
@@ -497,29 +556,43 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
       setStaffModalOpen(false);
       setEditingStaffId(null);
     } else {
-      // Add new
-      const tempPass = staffTempPassword || 'password123';
-      const { hashHex, saltHex } = await hashPassword(tempPass);
-      const newEmp: Employee = {
-        id: `emp_${Date.now()}`,
-        name: staffName,
-        username: staffUsername.toLowerCase().trim(),
-        passwordHash: hashHex,
-        saltHex: saltHex,
-        departmentIds: staffDept ? [staffDept] : [state.departments[0]?.id || 'dept-general'],
-        roleIds: staffRoles,
-        tags: staffTags,
-        targetWeeklyHours: staffTargetHours,
-        maxWeeklyHours: staffMaxHours,
-        baseHourlyRate: staffRate,
-        requiresPasswordChange: true,
-        pinCode: staffPin,
-        currentPunchStatus: 'clocked_out',
-      };
+      // new employee
+      const EMPLOYEE_COLORS = [
+  'bg-emerald-100 text-emerald-800 border-emerald-300',
+  'bg-blue-100 text-blue-800 border-blue-300',
+  'bg-purple-100 text-purple-800 border-purple-300',
+  'bg-amber-100 text-amber-800 border-amber-300',
+  'bg-rose-100 text-rose-800 border-rose-300',
+  'bg-indigo-100 text-indigo-800 border-indigo-300',
+  'bg-teal-100 text-teal-800 border-teal-300',
+  'bg-cyan-100 text-cyan-800 border-cyan-300',
+];
+// 1. Handle the password hashing first
+const tempPass = staffTempPassword || 'password123';
+const { hashHex, saltHex } = await hashPassword(tempPass);
+
+// 2. Then construct the new employee object cleanly
+const newEmployee: Employee = {
+  id: `emp_${Date.now()}`,
+  name: staffName,
+  username: staffUsername.toLowerCase().trim(),
+  passwordHash: hashHex,
+  saltHex: saltHex,
+  departmentIds: staffDept ? [staffDept] : [state.departments[0]?.id || 'dept-general'],
+  roleIds: staffRoles,
+  color: EMPLOYEE_COLORS[Math.floor(Math.random() * EMPLOYEE_COLORS.length)],
+  tags: staffTags,
+  targetWeeklyHours: staffTargetHours,
+  maxWeeklyHours: staffMaxHours,
+  baseHourlyRate: staffRate,
+  requiresPasswordChange: true,
+  pinCode: staffPin,
+  currentPunchStatus: 'clocked_out',
+};
 
       onUpdateState({
         ...state,
-        employees: [...state.employees, newEmp],
+        employees: [...state.employees, newEmployee],
       });
 
       setOnboardingCardData({
@@ -670,20 +743,20 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
   };
 
   // 3-Step Creator-Only Factory Reset ("Reset Company Portal to 0")
+  // ADD THE FUNCTION HERE:
   const handleExecuteFactoryReset = async () => {
-  setFactoryResetError('');
-  const cleanCreatorUser = factoryResetCreatorUser.trim().toLowerCase(); // Renamed
-  const expectedCreator = (
-    state.settings.creatorUsername ||
-    state.settings.managerUsername ||
-    'manager'
-  ).toLowerCase();
+    setFactoryResetError('');
+    const cleanUser = factoryResetCreatorUser.trim().toLowerCase();
+    const expectedCreator = (
+      state.settings.creatorUsername ||
+      state.settings.managerUsername ||
+      'manager'
+    ).toLowerCase();
 
-  if (cleanCreatorUser !== expectedCreator) {
-    setFactoryResetError(`Invalid creator username. Only the initial creator (@${expectedCreator}) has authority to reset this company portal.`);
-    return;
-  }
-  
+    if (cleanUser !== expectedCreator) {
+      setFactoryResetError(`Invalid creator username. Only the initial creator (@${expectedCreator}) has authority to reset this company portal.`);
+      return;
+    }
 
     let isPassValid = false;
     const targetHash = state.settings.creatorPasswordHash || state.settings.managerPasswordHash;
@@ -707,20 +780,36 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
       return;
     }
 
-    // Keep primary creator employee, wipe operational records
-    const creatorEmp =
-      state.employees.find((e) => e.username.toLowerCase() === expectedCreator) ||
-      state.employees[0];
-    const preservedEmployees = creatorEmp ? [creatorEmp] : [];
+    // 1. Wipe all local browser storage persistence so nothing lingers
+    localStorage.removeItem('open_schedule_state_v1');
+    localStorage.clear();
 
-    const resetState: OrganizationState = {
+    // 2. Build a clean state satisfying OrganizationState completely
+    const resetState = {
       ...state,
       versionTimestampMs: Date.now(),
       lastModifiedBy: expectedCreator,
-      employees: preservedEmployees,
+      settings: {
+        ...state.settings,
+        orgName: 'Fresh Company Portal',
+        creatorUsername: '',        // Wipes out the creator username
+        creatorPasswordHash: '',   // Wipes out the password hash
+        creatorSaltHex: '',        // Wipes out the salt
+        managerUsername: '',       // Wipes out manager username
+        managerPasswordHash: '',   // Wipes out manager password hash
+        managerSaltHex: '',        // Wipes out manager salt
+      },
+      employees: [], // Wipes out all staff accounts, usernames, and passwords
       shifts: [],
+      timePunches: [],
       punches: [],
       timeOffRequests: [],
+      availabilities: [],
+      roles: [],
+      departments: [],
+      skillTags: [],
+      shiftTemplates: [],
+      coverageRequirements: [],
       messages: [],
       salesData: [],
       reservationsData: [],
@@ -734,14 +823,18 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
           timestampIso: new Date().toISOString(),
         },
       ],
-    };
+    } as OrganizationState;
 
-    onUpdateState(resetState);
+    // 3. Update state and immediately reload to boot everyone back to the login screen
+    onUpdateState(resetState as any);
     setFactoryResetModalOpen(false);
     setFactoryResetStep(1);
     setFactoryResetConfirmationText('');
     setFactoryResetCreatorPass('');
-    setCopyFeedback('✓ Company portal reset to 0 successfully. Ready for fresh scheduling.');
+    
+    
+    // Force a full reload to clear active sessions and bring users to the login screen
+    window.location.href = window.location.pathname;
   };
 
   // Execute 1 of the 8 AI Actions
@@ -1313,26 +1406,27 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
                         <td key={d.date} className="p-2 border-l border-slate-200 align-top">
                           <div className="space-y-1.5 min-h-[48px]">
                             {dayShifts.map((s) => {
-                              const role = roleMap.get(s.roleId);
-                              return (
-                                <div
-                                  key={s.id}
-                                  className="group relative rounded-xl border border-amber-300 bg-amber-100/60 p-2 shadow-xs"
-                                >
-                                  <div className="font-bold text-amber-950 text-[11px]">{role?.name}</div>
-                                  <div className="font-mono text-amber-800 text-[10px]">
-                                    {formatShiftRange12H(s.startTime, s.endTime)}
-                                  </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteShift(s.id)}
-                                    className="absolute top-1 right-1 hidden group-hover:block text-amber-700 hover:text-rose-600"
-                                  >
-                                    <Trash2 className="h-3 w-3" />
-                                  </button>
-                                </div>
-                              );
-                            })}
+  const role = roleMap.get(s.roleId);
+  const isDraft = s.status === 'draft';
+  
+  // Look up the employee assigned to this shift to get their permanent color
+  const emp = state.employees.find((e) => e.id === s.employeeId);
+  
+  // Apply employee's permanent color if published, or amber styling if draft
+  const shiftCardColor = isDraft 
+    ? 'border-amber-300 bg-amber-50/70 text-amber-900' 
+    : (emp?.color || 'border-emerald-200 bg-emerald-50/70 text-slate-900');
+
+  return (
+    <div
+      key={s.id}
+      onClick={() => handleOpenEditShift(s)}
+      className={`group relative rounded-xl border p-2 shadow-xs cursor-pointer transition-all hover:ring-1 hover:ring-emerald-500 ${shiftCardColor}`}
+    >
+      {/* Shift card contents... */}
+    </div>
+  );
+})}
                             <button
                               type="button"
                               onClick={() => handleOpenAddShift(d.date)}
@@ -1348,135 +1442,255 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
 
                   {/* Staff Rows */}
                   {state.employees.map((emp) => {
-                    return (
-                      <tr key={emp.id} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="p-3 align-top">
-                          <div className="font-bold text-slate-900">{emp.name}</div>
-                          <div className="text-[11px] text-slate-400 font-mono">@{emp.username}</div>
-                          <div className="mt-1 flex flex-wrap gap-1">
-                            {emp.tags.slice(0, 2).map((tId) => {
-                              const tag = tagMap.get(tId);
-                              return (
-                                <span
-                                  key={tId}
-                                  className="rounded-full bg-slate-100 px-1.5 py-0.2 text-[9px] text-slate-600"
-                                >
-                                  {tag?.name || tId}
-                                </span>
-                              );
-                            })}
-                          </div>
-                        </td>
-                        {weekDays.map((d) => {
-                          const dayShifts = visibleShifts.filter((s) => s.employeeId === emp.id && s.date === d.date);
-                          const empTimeOff = state.timeOffRequests.find(
-                            (to) =>
-                              to.employeeId === emp.id &&
-                              to.status === 'approved' &&
-                              d.date >= to.startDate &&
-                              d.date <= to.endDate
-                          );
+  const badgeColor = emp.color || 'bg-slate-100 text-slate-800 border-slate-300';
 
-                          return (
-                            <td key={d.date} className="p-2 border-l border-slate-200 align-top">
-                              <div className="space-y-1.5 min-h-[48px]">
-                                {empTimeOff && (
-                                  <div className="rounded-lg bg-rose-50 border border-rose-200 p-1.5 text-center">
-                                    <div className="font-bold text-rose-800 text-[10px]">
-                                      {empTimeOff.partOfDay === 'morning_half'
-                                        ? '🌅 Morning Off'
-                                        : empTimeOff.partOfDay === 'night_half'
-                                        ? '🌙 Night Off'
-                                        : '🌴 Vacation / PTO'}
-                                    </div>
-                                    <div className="text-[9px] text-rose-600 truncate">{empTimeOff.reason}</div>
-                                  </div>
-                                )}
+  return (
+    <tr key={emp.id} className="hover:bg-slate-50/80 transition-colors">
+      <td className="p-3 align-top">
+        <div className={`inline-block rounded-lg px-2 py-0.5 text-xs font-bold border ${badgeColor}`}>
+          {emp.name}
+        </div>
+        <div className="text-[11px] text-slate-400 font-mono mt-1">@{emp.username}</div>
+        <div className="mt-1 flex flex-wrap gap-1">
+          {emp.tags.slice(0, 2).map((tId) => {
+            const tag = tagMap.get(tId);
+            return (
+              <span
+                key={tId}
+                className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] text-slate-600"
+              >
+                {tag?.name || tId}
+              </span>
+            );
+          })}
+        </div>
+      </td>
 
-                                {dayShifts.map((s) => {
-                                  const role = roleMap.get(s.roleId);
-                                  const isDraft = s.status === 'draft';
-                                  return (
-                                    <div
-                                      key={s.id}
-                                      onClick={() => handleOpenEditShift(s)}
-                                      className={`group relative rounded-xl border p-2 shadow-xs cursor-pointer transition-all hover:ring-1 hover:ring-emerald-500 ${
-                                        isDraft
-                                          ? 'border-amber-300 bg-amber-50/70'
-                                          : 'border-emerald-200 bg-emerald-50/70'
-                                      }`}
-                                    >
-                                      <div className="flex items-center justify-between">
-                                        <span className="font-bold text-slate-900 text-[11px]">{role?.name}</span>
-                                        <span
-                                          className={`rounded-full px-1.5 py-0.2 text-[8px] font-bold ${
-                                            isDraft
-                                              ? 'bg-amber-200 text-amber-900'
-                                              : 'bg-emerald-200 text-emerald-900'
-                                          }`}
-                                        >
-                                          {isDraft ? 'DRAFT' : 'PUBLISHED'}
-                                        </span>
-                                      </div>
-                                      <div className="font-mono text-slate-700 text-[10px] mt-0.5">
-                                        {formatShiftRange12H(s.startTime, s.endTime)}
-                                      </div>
-                                      <div className="flex flex-wrap gap-1 mt-1">
-                                        {s.requiresClaim && (
-                                          <span className="rounded-full bg-blue-100 text-blue-800 text-[8px] px-1.5 font-bold">
-                                            Claim Req
-                                          </span>
-                                        )}
-                                        {s.isUpForGrabs && (
-                                          <span className="rounded-full bg-amber-100 text-amber-800 text-[8px] px-1.5 font-bold">
-                                            Up for Grabs
-                                          </span>
-                                        )}
-                                      </div>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleDeleteShift(s.id);
-                                        }}
-                                        className="absolute top-1 right-1 hidden group-hover:block text-slate-400 hover:text-rose-600 bg-white/80 rounded p-0.5"
-                                        title="Delete Shift"
-                                      >
-                                        <Trash2 className="h-3 w-3" />
-                                      </button>
-                                    </div>
-                                  );
-                                })}
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setEditingShiftId(null);
-                                    setShiftDate(d.date);
-                                    setShiftEmployee(emp.id);
-                                    setShiftRole(emp.roleIds[0] || state.roles[0]?.id || '');
-                                    setShiftStartTime('09:00');
-                                    setShiftEndTime('17:00');
-                                    setShiftTags([]);
-                                    setShiftRequiresClaim(false);
-                                    setShiftVisibleToEmployeeIds([]);
-                                    setShiftModalOpen(true);
-                                  }}
-                                  className="w-full text-center py-1 text-[10px] text-slate-400 hover:text-slate-700 border border-dashed border-slate-200 rounded-lg opacity-60 hover:opacity-100"
-                                >
-                                  + Shift
-                                </button>
-                              </div>
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    );
-                  })}
+      {weekDays.map((d) => {
+        const dayShifts = visibleShifts.filter((s) => s.employeeId === emp.id && s.date === d.date);
+        const empTimeOff = state.timeOffRequests.find(
+          (to) =>
+            to.employeeId === emp.id &&
+            to.status === 'approved' &&
+            d.date >= to.startDate &&
+            d.date <= to.endDate
+        );
+
+        return (
+          <td key={d.date} className="p-2 border-l border-slate-200 align-top">
+            <div className="space-y-1.5 min-h-[48px]">
+              {empTimeOff && (
+                <div className="rounded-lg bg-rose-50 border border-rose-200 p-1.5 text-center">
+                  <div className="font-bold text-rose-800 text-[10px]">
+                    {empTimeOff.partOfDay === 'morning_half'
+                      ? '🌅 Morning Off'
+                      : empTimeOff.partOfDay === 'night_half'
+                      ? '🌙 Night Off'
+                      : '🌴 Vacation / PTO'}
+                  </div>
+                  <div className="text-[9px] text-rose-600 truncate">{empTimeOff.reason}</div>
+                </div>
+              )}
+
+              {dayShifts.map((s) => {
+                const role = roleMap.get(s.roleId);
+                const isDraft = s.status === 'draft';
+                return (
+                  <div
+                    key={s.id}
+                    onClick={() => handleOpenEditShift(s)}
+                    className={`group relative rounded-xl border p-2 shadow-xs cursor-pointer transition-all hover:ring-1 hover:ring-emerald-500 ${
+                      isDraft
+                        ? 'border-amber-300 bg-amber-50/70'
+                        : 'border-emerald-200 bg-emerald-50/70'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-900 text-[11px]">{role?.name}</span>
+                      <span
+                        className={`rounded-full px-1.5 py-0.5 text-[8px] font-bold ${
+                          isDraft
+                            ? 'bg-amber-200 text-amber-900'
+                            : 'bg-emerald-200 text-emerald-900'
+                        }`}
+                      >
+                        {isDraft ? 'DRAFT' : 'PUBLISHED'}
+                      </span>
+                    </div>
+                    <div className="font-mono text-slate-700 text-[10px] mt-0.5">
+                      {formatShiftRange12H(s.startTime, s.endTime)}
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {s.requiresClaim && (
+                        <span className="rounded-full bg-blue-100 text-blue-800 text-[8px] px-1.5 font-bold">
+                          Claim Req
+                        </span>
+                      )}
+                      {s.isUpForGrabs && (
+                        <span className="rounded-full bg-amber-100 text-amber-800 text-[8px] px-1.5 font-bold">
+                          Up for Grabs
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteShift(s.id);
+                      }}
+                      className="absolute top-1 right-1 hidden group-hover:block text-slate-400 hover:text-rose-600 bg-white/80 rounded p-0.5"
+                      title="Delete Shift"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
+                );
+              })}
+
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingShiftId(null);
+                  setShiftDate(d.date);
+                  setShiftEmployee(emp.id);
+                  setShiftRole(emp.roleIds[0] || state.roles[0]?.id || '');
+                  setShiftStartTime('09:00');
+                  setShiftEndTime('17:00');
+                  setShiftTags([]);
+                  setShiftRequiresClaim(false);
+                  setShiftVisibleToEmployeeIds([]);
+                  setShiftModalOpen(true);
+                }}
+                className="w-full text-center py-1 text-[10px] text-slate-400 hover:text-slate-700 border border-dashed border-slate-200 rounded-lg opacity-60 hover:opacity-100"
+              >
+                + Shift
+              </button>
+            </div>
+          </td>
+        );
+      })}
+    </tr>
+  );
+})}
                 </tbody>
               </table>
             </div>
 
             {/* Vacation & Time-Off Requests Approval Queue Card */}
+
+            <button
+  type="button"
+  onClick={() => setManagerTimeOffModalOpen(true)}
+  className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow hover:bg-emerald-700 transition"
+>
+  <Plus className="h-3.5 w-3.5" />
+  <span>Add Vacation / PTO Block</span>
+</button>
+
+{managerTimeOffModalOpen && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+    <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl text-slate-800">
+      <div className="flex items-center justify-between mb-4 border-b border-slate-100 pb-3">
+        <h3 className="font-bold text-slate-900 text-base">Add Employee Vacation / PTO</h3>
+        <button
+          type="button"
+          onClick={() => setManagerTimeOffModalOpen(false)}
+          className="text-slate-400 hover:text-slate-700"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+      <form onSubmit={handleManagerSubmitTimeOff} className="space-y-3 text-xs">
+        <div>
+          <label className="block text-slate-700 font-semibold mb-1">Team Member</label>
+          <select
+            value={mgrToEmployeeId}
+            onChange={(e) => setMgrToEmployeeId(e.target.value)}
+            className="w-full rounded-xl border border-slate-300 px-3 py-2 bg-white text-slate-900 font-medium"
+          >
+            {state.employees.map((emp) => (
+              <option key={emp.id} value={emp.id}>
+                {emp.name} (@{emp.username})
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-slate-700 font-semibold mb-1">Start Date</label>
+            <input
+              type="date"
+              value={mgrToStart}
+              onChange={(e) => setMgrToStart(e.target.value)}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-slate-900"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-slate-700 font-semibold mb-1">End Date</label>
+            <input
+              type="date"
+              value={mgrToEnd}
+              onChange={(e) => setMgrToEnd(e.target.value)}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-slate-900"
+              required
+            />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-slate-700 font-semibold mb-1">Type</label>
+            <select
+              value={mgrToType}
+              onChange={(e) => setMgrToType(e.target.value as any)}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 bg-white text-slate-900"
+            >
+              <option value="vacation">Vacation</option>
+              <option value="pto">Paid Time Off (PTO)</option>
+              <option value="personal">Personal</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-slate-700 font-semibold mb-1">Part of Day</label>
+            <select
+              value={mgrToPartOfDay}
+              onChange={(e) => setMgrToPartOfDay(e.target.value as any)}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 bg-white text-slate-900"
+            >
+              <option value="full_day">Full Day</option>
+              <option value="morning_half">Morning Only (AM)</option>
+              <option value="night_half">Night Only (PM)</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label className="block text-slate-700 font-semibold mb-1">Notes / Reason</label>
+          <input
+            type="text"
+            value={mgrToReason}
+            onChange={(e) => setMgrToReason(e.target.value)}
+            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-slate-900"
+          />
+        </div>
+        <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+          <button
+            type="button"
+            onClick={() => setManagerTimeOffModalOpen(false)}
+            className="rounded-xl border border-slate-200 px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700 shadow"
+          >
+            Add & Approve PTO Block
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+)}
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-3">
                 <div className="flex items-center gap-2">
@@ -3909,7 +4123,7 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
                   <button
                     type="button"
                     onClick={async () => {
-                      await exportEncryptedVault(state, 'company_backup_pass_123');
+                      await exportEncryptedVault(state, '');
                       setFactoryResetBackupDownloaded(true);
                       setCopyFeedback('✓ Full company backup downloaded!');
                     }}
@@ -4061,3 +4275,4 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
     </div>
   );
 };
+

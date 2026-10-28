@@ -340,23 +340,24 @@ export async function atomicCloudWrite(
   });
 
   // Staging write
-  localStorage.setItem(`openschedule_cloud_staging_${orgId}`, stagingPayload);
+  globalThis.localStorage.setItem(`openschedule_cloud_staging_${orgId}`, stagingPayload);
 
   // Verification step
-  const readBack = localStorage.getItem(`openschedule_cloud_staging_${orgId}`);
+  const readBack = globalThis.localStorage.getItem(`openschedule_cloud_staging_${orgId}`);
   if (!readBack) {
     throw new Error('Staging write failed: unable to read back payload.');
   }
   const parsed = JSON.parse(readBack);
   const verifiedChecksum = await computeSha256(JSON.stringify(parsed.state));
-
   if (verifiedChecksum !== checksum) {
     throw new Error('Integrity check failed: checksum mismatch between staging and payload.');
   }
 
   // Promote staging to main
-  localStorage.setItem(`openschedule_cloud_main_${orgId}`, stagingPayload);
-  markStateDirty(false);
+  globalThis.localStorage.setItem(`openschedule_cloud_main_${orgId}`, stagingPayload);
+
+  // Promote staging to main
+  globalThis.localStorage.setItem(`openschedule_cloud_main_${orgId}`, stagingPayload);
 
   return {
     success: true,
@@ -374,8 +375,9 @@ export async function checkForCloudConflict(
   localState: OrganizationState
 ): Promise<{ hasConflict: boolean; cloudState?: OrganizationState; cloudLastModifiedBy?: string; cloudVersionTimestampMs?: number }> {
   const orgId = localState.orgId || 'org_main';
-  const mainRaw = localStorage.getItem(`openschedule_cloud_main_${orgId}`);
+  const mainRaw = globalThis.localStorage.getItem(`openschedule_cloud_main_${orgId}`);
   if (!mainRaw) return { hasConflict: false };
+  // ...
 
   try {
     const parsed = JSON.parse(mainRaw);
@@ -404,9 +406,9 @@ export async function hydrateFromCloudIfNewer(
   localState: OrganizationState
 ): Promise<{ updated: boolean; state: OrganizationState; reason?: string }> {
   const orgId = localState.orgId || 'org_main';
-  const mainRaw = localStorage.getItem(`openschedule_cloud_main_${orgId}`);
+  const mainRaw = globalThis.localStorage.getItem(`openschedule_cloud_main_${orgId}`);
   if (!mainRaw) return { updated: false, state: localState };
-
+  // ...
   try {
     const parsed = JSON.parse(mainRaw);
     const cloudState: OrganizationState = parsed.state;
