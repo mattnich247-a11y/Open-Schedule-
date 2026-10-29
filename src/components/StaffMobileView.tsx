@@ -101,6 +101,10 @@ export const StaffMobileView: React.FC<StaffMobileViewProps> = ({
   const [totpError, setTotpError] = useState<string>('');
   const [showPin, setShowPin] = useState<boolean>(false);
   const [geofenceAlertDismissed, setGeofenceAlertDismissed] = useState<boolean>(false);
+  
+  // Retroactive clock-out adjustment state
+  const [clockOutModalOpen, setClockOutModalOpen] = useState<boolean>(false);
+  const [adjustedClockOutTime, setAdjustedClockOutTime] = useState<string>('');
 
   // My Account drawer state
   const [myAccountOpen, setMyAccountOpen] = useState<boolean>(false);
@@ -267,15 +271,20 @@ export const StaffMobileView: React.FC<StaffMobileViewProps> = ({
     }
   };
 
-  // Execute Punch
+  // Alias handlePunch to call handleCustomPunchTime seamlessly
   const handlePunch = async (type: PunchType): Promise<boolean> => {
+    return handleCustomPunchTime(type);
+  };
+
+  // Update handlePunch to accept an optional custom timestamp for retroactive clock-outs
+  const handleCustomPunchTime = async (type: PunchType, customIsoTimestamp?: string): Promise<boolean> => {
     const isPresenceVerified = isInsideGeofence || currentEmployee.kioskCodeVerified;
     if (!isPresenceVerified && type === 'clock_in') {
       setPresenceModalOpen(true);
       return false;
     }
 
-    const nowIso = new Date().toISOString();
+    const nowIso = customIsoTimestamp || new Date().toISOString();
     const prevHash =
       state.punches.length > 0 ? state.punches[state.punches.length - 1].hash : GENESIS_PUNCH_HASH;
 
@@ -608,12 +617,18 @@ export const StaffMobileView: React.FC<StaffMobileViewProps> = ({
             </p>
             <div className="mt-3 flex gap-2">
               <button
-                type="button"
-                onClick={() => handlePunch('clock_out')}
-                className="rounded-lg bg-rose-600 px-3 py-1.5 font-bold text-white hover:bg-rose-700 shadow-sm"
-              >
-                Yes, Clock Out
-              </button>
+                      type="button"
+                      onClick={() => {
+                        const now = new Date();
+                        const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+                        setAdjustedClockOutTime(timeStr);
+                        setClockOutModalOpen(true);
+                      }}
+                      className="flex items-center justify-center gap-2 rounded-2xl bg-rose-600 py-3 text-xs font-bold text-white hover:bg-rose-700 shadow-sm transition-all"
+                    >
+                      <LogOut className="h-4 w-4" />
+                      CLOCK OUT
+                    </button>
               <button
                 type="button"
                 onClick={() => setGeofenceAlertDismissed(true)}
@@ -1635,6 +1650,77 @@ export const StaffMobileView: React.FC<StaffMobileViewProps> = ({
         onConfirm={() => setPresenceModalOpen(false)}
         onCancel={() => setPresenceModalOpen(false)}
       />
+
+      {/* Retroactive Clock-Out Time Adjustment Modal */}
+      {clockOutModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+          <div className="w-full max-w-sm rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 text-slate-800">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2 text-rose-600">
+                <Clock className="h-5 w-5" />
+                <h3 className="font-bold text-slate-900 text-sm">Confirm Clock-Out Time</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setClockOutModalOpen(false)}
+                className="text-slate-400 hover:text-slate-700 p-1"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              If you forgot to clock out earlier, you can adjust your departure time below before submitting your punch.
+            </p>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Clock-Out Time (Today)
+              </label>
+              <input
+                type="time"
+                value={adjustedClockOutTime}
+                onChange={(e) => setAdjustedClockOutTime(e.target.value)}
+                className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-sm font-mono text-slate-900 focus:border-rose-500 focus:outline-none"
+                required
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setClockOutModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!adjustedClockOutTime) return;
+                  // Construct ISO string for today with the adjusted time
+                  const [hours, minutes] = adjustedClockOutTime.split(':').map(Number);
+                  const targetDate = new Date();
+                  targetDate.setHours(hours, minutes, 0, 0);
+
+
+                  // Alias handlePunch to call handleCustomPunchTime seamlessly
+  const handlePunch = async (type: PunchType): Promise<boolean> => {
+    return handleCustomPunchTime(type);
+  };
+
+                  // Execute the punch with the custom timestamp
+                  handleCustomPunchTime('clock_out', targetDate.toISOString());
+                  setClockOutModalOpen(false);
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 text-white hover:bg-rose-700 shadow-sm transition-colors"
+              >
+                Submit Clock Out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
