@@ -14,7 +14,9 @@ import {
   Clock,
   Compass,
   Download,
+  FileText,
   Globe,
+  HelpCircle,
   KeyRound,
   Layers,
   Lock,
@@ -198,6 +200,20 @@ export default function App() {
   const [loginPassword, setLoginPassword] = useState<string>('');
   const [loginError, setLoginError] = useState<string>('');
   const [loginModeSelect, setLoginModeSelect] = useState<'manager' | 'staff' | 'kiosk'>('manager');
+  // Detect if browser data was cleared (no saved workspace state in localStorage)
+  const [isMissingBrowserData, setIsMissingBrowserData] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return !localStorage.getItem('openschedule_state');
+    }
+    return false;
+  });
+
+  // Cloud Reconnection Overlay state (used when browser data is cleared)
+  const [reconnectUrl, setReconnectUrl] = useState<string>('');
+  const [reconnectPubKey, setReconnectPubKey] = useState<string>('');
+  const [reconnectProvider, setReconnectProvider] = useState<'supabase' | 'firebase' | 'local_relay'>('supabase');
+  const [isReconnecting, setIsReconnecting] = useState<boolean>(false);
+  const [ isCloudGuideModalOpen, setIsCloudGuideModalOpen ] = useState<boolean>(false);
 
   // File import for .openschedule backup on login screen
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -438,6 +454,7 @@ export default function App() {
 
   // Auto-save active workspace and dictionary to localStorage
   useEffect(() => {
+    if (isMissingBrowserData) return;
     try {
       localStorage.setItem('openschedule_state', JSON.stringify(state));
       localStorage.setItem('openschedule_workspaces', JSON.stringify(workspaces));
@@ -445,7 +462,7 @@ export default function App() {
     } catch {
       // quota or local storage disabled
     }
-  }, [state, workspaces, currentOrgId]);
+  }, [state, workspaces, currentOrgId, isMissingBrowserData]);
 
   // Keep simulator employee synchronized if employees list changes
   useEffect(() => {
@@ -538,6 +555,101 @@ export default function App() {
     );
   };
 
+  // Connect to Cloud via URL & Public Key (Manual or via Embedded Welcome Link)
+  const handleCloudReconnect = async (
+    targetUrl: string,
+    targetKey: string,
+    targetProvider?: 'supabase' | 'firebase' | 'local_relay',
+    targetOrgName?: string
+  ) => {
+    setLoginError('');
+    const cleanUrl = targetUrl.trim();
+    const cleanKey = targetKey.trim();
+
+    if (!cleanUrl || !cleanKey) {
+      setLoginError('Please enter both your Cloud URL and Public Key.');
+      return;
+    }
+
+    // Auto-detect provider from URL if not explicitly set
+    const detectedProvider: 'supabase' | 'firebase' | 'local_relay' =
+      targetProvider ||
+      (cleanUrl.includes('firebase') || cleanUrl.includes('googleapis')
+        ? 'firebase'
+        : cleanUrl.includes('openschedule.local')
+        ? 'local_relay'
+        : 'supabase');
+
+    setIsReconnecting(true);
+    try {
+      const conn = await testCloudConnection(detectedProvider, cleanUrl, cleanKey);
+      if (!conn.success) {
+        setLoginError(conn.message || 'Could not connect to cloud server. Check your URL and Public Key.');
+        setIsReconnecting(false);
+        return;
+      }
+
+      // Build base state configured with this cloud server
+      const baseState: OrganizationState = {
+        ...state,
+        versionTimestampMs: 0, // Force cloud hydration to recognize remote backup as newer
+        settings: {
+          ...state.settings,
+          orgName: targetOrgName || state.settings.orgName,
+          cloudSync: {
+            enabled: true,
+            provider: detectedProvider,
+            projectUrl: cleanUrl,
+            apiKey: cleanKey,
+          },
+        },
+      };
+
+      // Pull latest workspace backup from cloud if available
+      const hydratedResult = await hydrateFromCloudIfNewer(baseState);
+      const restoredState = hydratedResult && hydratedResult.state ? hydratedResult.state : baseState;
+      const orgId = restoredState.orgId || currentOrgId || 'org_restored';
+
+      setState(restoredState);
+      setCurrentOrgId(orgId);
+      setWorkspaces((prev) => ({
+        ...prev,
+        [orgId]: restoredState,
+      }));
+      setCurrentEmployee(restoredState.employees[0] || null);
+
+      // Mark browser storage as restored so standard Username/Password login appears
+      setIsMissingBrowserData(false);
+      showToast(`✓ Connected to ${restoredState.settings.orgName}! Please sign in.`);
+
+      // Clean URL query params from address bar without reloading
+      if (typeof window !== 'undefined' && window.location.search) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    } catch (err: any) {
+      setLoginError(err.message || 'Failed to reconnect to cloud backup.');
+    } finally {
+      setIsReconnecting(false);
+    }
+  };
+
+  // Automatically check for embedded Welcome/Recovery link parameters (?cloudUrl=...&pubKey=...)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const urlParam = params.get('cloudUrl');
+    const keyParam = params.get('pubKey');
+    const providerParam = params.get('provider') as 'supabase' | 'firebase' | 'local_relay' | null;
+    const orgParam = params.get('orgName');
+
+    if (urlParam && keyParam) {
+      setReconnectUrl(urlParam);
+      setReconnectPubKey(keyParam);
+      if (providerParam) setReconnectProvider(providerParam);
+      handleCloudReconnect(urlParam, keyParam, providerParam || undefined, orgParam || undefined);
+    }
+  }, []);
+
   // Login Authentication Handler
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -548,6 +660,7 @@ export default function App() {
     // 1. Silent Demo Sandbox Login (if demo / demomode is typed)
     if (cleanUser === 'demo' && loginPassword === 'demomode') {
       setIsDemoModeActive(true);
+      setIsMissingBrowserData(false);
       setIsLoggedIn(true);
       setAppMode(loginModeSelect);
       if (loginModeSelect === 'staff') {
@@ -636,6 +749,7 @@ export default function App() {
       setImportPassphrasePrompt(false);
       setPendingImportFile(null);
       setImportPassphrase('');
+      setIsMissingBrowserData(false);
       setIsLoggedIn(true);
       setAppMode('manager');
       showToast(`✓ Successfully unlocked and restored ${imported.settings.orgName}!`);
@@ -792,6 +906,7 @@ export default function App() {
     setState(newOrgState);
     setCurrentEmployee(managerEmp);
     setIsSetupWizardOpen(false);
+    setIsMissingBrowserData(false);
     setIsLoggedIn(true);
     setAppMode('manager');
   };
@@ -960,101 +1075,231 @@ export default function App() {
           )}
 
           {/* Login Form */}
-          <form onSubmit={handleLoginSubmit} className="space-y-4 text-xs">
-            {/* Mode selection buttons */}
-            <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200">
-              <button
-                type="button"
-                onClick={() => setLoginModeSelect('manager')}
-                className={`py-2 rounded-lg font-bold text-xs transition-all ${
-                  loginModeSelect === 'manager'
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Manager
-              </button>
-              <button
-                type="button"
-                onClick={() => setLoginModeSelect('staff')}
-                className={`py-2 rounded-lg font-bold text-xs transition-all ${
-                  loginModeSelect === 'staff'
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Employee View
-              </button>
-              <button
-                type="button"
-                onClick={() => setLoginModeSelect('kiosk')}
-                className={`py-2 rounded-lg font-bold text-xs transition-all ${
-                  loginModeSelect === 'kiosk'
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Kiosk Terminal
-              </button>
-            </div>
-
-            {loginModeSelect !== 'kiosk' ? (
-              <>
-                <div>
-                  <label className="block text-slate-700 font-semibold mb-1 text-xs">Username</label>
-                  <input
-                    type="text"
-                    value={loginUsername}
-                    onChange={(e) => setLoginUsername(e.target.value)}
-                    placeholder="Enter your username"
-                    className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 focus:outline-none"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-700 font-semibold mb-1 text-xs">Password</label>
-                  <input
-                    type="password"
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 focus:outline-none"
-                    required
-                  />
-                </div>
-              </>
-            ) : (
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800">
-                <p className="font-semibold mb-1">Dedicated Kiosk Timeclock</p>
-                <p className="text-slate-600 text-[11px]">
-                  Launches full-screen timeclock for in-person clock ins with 4-digit PINs.
-                </p>
-              </div>
-            )}
-
-            {loginError && (
-              <div className="rounded-lg bg-rose-50 border border-rose-200 p-2.5 text-xs text-rose-700">
-                {loginError}
-              </div>
-            )}
-
-            {importError && (
-              <div className="rounded-lg bg-rose-50 border border-rose-200 p-2.5 text-xs text-rose-700">
-                {importError}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              className="w-full rounded-xl bg-emerald-600 py-3 text-sm font-bold text-white shadow hover:bg-emerald-700 transition-colors cursor-pointer"
+          {/* Login Form (Swaps to Cloud URL & Public Key if browser data was cleared) */}
+          {isMissingBrowserData ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleCloudReconnect(reconnectUrl, reconnectPubKey, reconnectProvider);
+              }}
+              className="space-y-4 text-xs"
             >
-              {loginModeSelect === 'kiosk'
-                ? `Launch Kiosk for ${state.settings.orgName}`
-                : `Sign In to ${state.settings.orgName}`}
-            </button>
-          </form>
+              {/* Identical Mode selection buttons */}
+              <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setLoginModeSelect('manager')}
+                  className={`py-2 rounded-lg font-bold text-xs transition-all ${
+                    loginModeSelect === 'manager'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Manager
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLoginModeSelect('staff')}
+                  className={`py-2 rounded-lg font-bold text-xs transition-all ${
+                    loginModeSelect === 'staff'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Employee View
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLoginModeSelect('kiosk')}
+                  className={`py-2 rounded-lg font-bold text-xs transition-all ${
+                    loginModeSelect === 'kiosk'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Kiosk Terminal
+                </button>
+              </div>
 
+              {/* Notice Banner */}
+              <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-3 text-[11px] text-amber-900 leading-relaxed">
+                <span className="font-bold block text-amber-950 mb-0.5">
+                  No Saved Browser Data Detected
+                </span>
+                Enter your business Cloud URL and Public Key to reconnect your workspace backup, or use the Employee Help button below.
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-slate-700 font-semibold text-xs">
+                    Cloud Server URL
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setIsCloudGuideModalOpen(true)}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 hover:underline"
+                  >
+                    <HelpCircle className="h-3 w-3" />
+                    <span>What is this & how to find it?</span>
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  value={reconnectUrl}
+                  onChange={(e) => setReconnectUrl(e.target.value)}
+                  placeholder="https://your-project.supabase.co"
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 font-mono focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 focus:outline-none"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1 text-xs">
+                  Public Key (Anon Key)
+                </label>
+                <input
+                  type="password"
+                  value={reconnectPubKey}
+                  onChange={(e) => setReconnectPubKey(e.target.value)}
+                  placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 font-mono focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 focus:outline-none"
+                  required
+                />
+              </div>
+
+              {loginError && (
+                <div className="rounded-lg bg-rose-50 border border-rose-200 p-2.5 text-xs text-rose-700">
+                  {loginError}
+                </div>
+              )}
+
+              {importError && (
+                <div className="rounded-lg bg-rose-50 border border-rose-200 p-2.5 text-xs text-rose-700">
+                  {importError}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isReconnecting}
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-sm font-bold text-white shadow hover:bg-emerald-700 disabled:opacity-50 transition-colors cursor-pointer"
+              >
+                {isReconnecting ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    <span>Reconnecting to Cloud...</span>
+                  </>
+                ) : (
+                  <span>Reconnect Cloud & Continue to Login</span>
+                )}
+              </button>
+
+              {/* Employee Help PDF Button */}
+              <button
+                type="button"
+                onClick={() => window.open('/employee-help.pdf', '_blank', 'noopener,noreferrer')}
+                className="w-full flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 py-2.5 text-xs font-bold text-slate-700 transition-colors cursor-pointer"
+              >
+                <FileText className="h-4 w-4 text-emerald-600" />
+                <span>Employee Help: How to Sign In Without Keys (PDF)</span>
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleLoginSubmit} className="space-y-4 text-xs">
+              {/* Mode selection buttons */}
+              <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setLoginModeSelect('manager')}
+                  className={`py-2 rounded-lg font-bold text-xs transition-all ${
+                    loginModeSelect === 'manager'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Manager
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLoginModeSelect('staff')}
+                  className={`py-2 rounded-lg font-bold text-xs transition-all ${
+                    loginModeSelect === 'staff'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Employee View
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLoginModeSelect('kiosk')}
+                  className={`py-2 rounded-lg font-bold text-xs transition-all ${
+                    loginModeSelect === 'kiosk'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Kiosk Terminal
+                </button>
+              </div>
+
+              {loginModeSelect !== 'kiosk' ? (
+                <>
+                  <div>
+                    <label className="block text-slate-700 font-semibold mb-1 text-xs">Username</label>
+                    <input
+                      type="text"
+                      value={loginUsername}
+                      onChange={(e) => setLoginUsername(e.target.value)}
+                      placeholder="Enter your username"
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 focus:outline-none"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-700 font-semibold mb-1 text-xs">Password</label>
+                    <input
+                      type="password"
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 focus:outline-none"
+                      required
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800">
+                  <p className="font-semibold mb-1">Dedicated Kiosk Timeclock</p>
+                  <p className="text-slate-600 text-[11px]">
+                    Launches full-screen timeclock for in-person clock ins with 4-digit PINs.
+                  </p>
+                </div>
+              )}
+
+              {loginError && (
+                <div className="rounded-lg bg-rose-50 border border-rose-200 p-2.5 text-xs text-rose-700">
+                  {loginError}
+                </div>
+              )}
+
+              {importError && (
+                <div className="rounded-lg bg-rose-50 border border-rose-200 p-2.5 text-xs text-rose-700">
+                  {importError}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                className="w-full rounded-xl bg-emerald-600 py-3 text-sm font-bold text-white shadow hover:bg-emerald-700 transition-colors cursor-pointer"
+              >
+                {loginModeSelect === 'kiosk'
+                  ? `Launch Kiosk for ${state.settings.orgName}`
+                  : `Sign In to ${state.settings.orgName}`}
+              </button>
+            </form>
+          )}
           {/* Quick Actions & Wizard on Login Screen */}
           <div className="mt-6 pt-5 border-t border-slate-200 space-y-2.5">
             <button
@@ -1137,6 +1382,92 @@ export default function App() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* Cloud URL & Public Key Recovery Guide Modal */}
+        {isCloudGuideModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+            <div className="w-full max-w-lg rounded-3xl bg-white border border-slate-200 p-6 shadow-2xl text-slate-800 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-xl bg-emerald-100 text-emerald-700">
+                    <Globe className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-sm">
+                      What are the Cloud URL & Public Key?
+                    </h3>
+                    <p className="text-[11px] text-slate-500">
+                      How to reconnect your business server after clearing browser data
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsCloudGuideModalOpen(false)}
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="space-y-3 text-xs text-slate-600 leading-relaxed">
+                <p>
+                  Because <strong>Open Schedule</strong> has no central corporate server, your schedules and team chat are backed up to the private <strong>Supabase</strong> or <strong>Firebase</strong> database you connected when first setting up your business.
+                </p>
+                <p>
+                  When your browser data is cleared or you open the app on a brand-new computer, your browser needs those same two connection keys to locate your cloud backup again.
+                </p>
+
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3.5 space-y-2">
+                  <div className="font-bold text-slate-900">
+                    Where to find them in Supabase:
+                  </div>
+                  <ol className="list-decimal list-inside space-y-1 text-[11px] text-slate-700">
+                    <li>Log in to your account at <strong>supabase.com</strong> and select your project.</li>
+                    <li>Click <strong>Project Settings</strong> (the gear icon at the bottom of the left sidebar) &rarr; <strong>API</strong>.</li>
+                    <li>Copy your <strong>Project URL</strong> and your <strong>Project API Key (anon / public)</strong>.</li>
+                  </ol>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3.5 space-y-2">
+                  <div className="font-bold text-slate-900">
+                    Where to find them in Firebase:
+                  </div>
+                  <ol className="list-decimal list-inside space-y-1 text-[11px] text-slate-700">
+                    <li>Log in to <strong>console.firebase.google.com</strong> and open your project.</li>
+                    <li>Click the gear icon &rarr; <strong>Project Settings</strong> &rarr; <strong>General</strong>.</li>
+                    <li>Scroll down to <strong>Your Apps</strong> to copy your project URL and `apiKey`.</li>
+                  </ol>
+                </div>
+
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-[11px] text-emerald-900">
+                  <strong>Tip for Employees:</strong> Team members never need to look up these keys! Simply re-click the <strong>Welcome Link</strong> your manager sent you when you joined—it has your company&apos;s connection info built right in.
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsCloudGuideModalOpen(false);
+                    window.open('/employee-help.pdf', '_blank', 'noopener,noreferrer');
+                  }}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 hover:underline"
+                >
+                  <FileText className="h-3.5 w-3.5" />
+                  <span>Open Employee PDF Guide</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsCloudGuideModalOpen(false)}
+                  className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-bold text-white hover:bg-slate-800"
+                >
+                  Got It
+                </button>
+              </div>
             </div>
           </div>
         )}
