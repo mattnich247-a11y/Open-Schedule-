@@ -452,9 +452,9 @@ export default function App() {
     }));
   };
 
-  // Auto-save active workspace and dictionary to localStorage
+  // Auto-save active workspace and dictionary to localStorage (skipped in Demo Mode)
   useEffect(() => {
-    if (isMissingBrowserData) return;
+    if (isMissingBrowserData || isDemoModeActive) return;
     try {
       localStorage.setItem('openschedule_state', JSON.stringify(state));
       localStorage.setItem('openschedule_workspaces', JSON.stringify(workspaces));
@@ -462,7 +462,7 @@ export default function App() {
     } catch {
       // quota or local storage disabled
     }
-  }, [state, workspaces, currentOrgId, isMissingBrowserData]);
+  }, [state, workspaces, currentOrgId, isMissingBrowserData, isDemoModeActive]);
 
   // Keep simulator employee synchronized if employees list changes
   useEffect(() => {
@@ -674,15 +674,26 @@ export default function App() {
 
     const cleanUser = loginUsername.trim().toLowerCase();
 
-    // 1. Silent Demo Sandbox Login (if demo / demomode is typed)
+    // 1. Silent Demo Sandbox Login (Loads 3 general companies in memory)
     if (cleanUser === 'demo' && loginPassword === 'demomode') {
       setIsDemoModeActive(true);
-      setIsMissingBrowserData(false);
       setIsLoggedIn(true);
-      setAppMode(loginModeSelect);
-      if (loginModeSelect === 'staff') {
-        setCurrentEmployee(state.employees[0] || null);
-      }
+      setAppMode('manager');
+
+      const bistro = getBistro313Preset();
+      const apex = getApexOutfitterPreset();
+      const medical = getMetroUrgentCarePreset();
+
+      const demoWorkspaces = {
+        [bistro.orgId || 'org_bistro313']: bistro,
+        [apex.orgId || 'org_apex']: apex,
+        [medical.orgId || 'org_medical']: medical,
+      };
+
+      setWorkspaces(demoWorkspaces);
+      setCurrentOrgId(bistro.orgId || 'org_bistro313');
+      setState(bistro);
+      setCurrentEmployee(bistro.employees[0] || null);
       return;
     }
 
