@@ -1413,9 +1413,11 @@ const newEmployee: Employee = {
   const emp = state.employees.find((e) => e.id === s.employeeId);
   
   // Apply employee's permanent color if published, or amber styling if draft
-  const shiftCardColor = isDraft 
-    ? 'border-amber-300 bg-amber-50/70 text-amber-900' 
-    : (emp?.color || 'border-emerald-200 bg-emerald-50/70 text-slate-900');
+  const showColors = state.settings.featureToggles.showEmployeeColors ?? true;
+
+const shiftCardColor = isDraft 
+  ? 'border-amber-300 bg-amber-50/70 text-amber-900' 
+  : (showColors && emp?.color ? emp.color : 'border-emerald-200 bg-emerald-50/70 text-slate-900');
 
   return (
     <div

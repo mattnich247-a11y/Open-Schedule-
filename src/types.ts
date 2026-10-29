@@ -201,6 +201,7 @@ export interface OrganizationSettings {
   featureToggles: FeatureToggles;
   cloudSync: CloudSyncConfig;
   autoSaveIntervalMinutes: number;
+  showEmployeeColors?: boolean
 }
 
 export interface CompactShift {

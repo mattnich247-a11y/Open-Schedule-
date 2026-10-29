@@ -311,7 +311,10 @@ export const KioskTimeclock: React.FC<KioskTimeclockProps> = ({
                 <button
                   key={emp.id}
                   type="button"
-                  onClick={() => handleSelectEmployeeDirect(emp)}
+                  onClick={() => {
+  setSelectedEmployee(emp);
+  setEnteredPin(''); // Ensures the PIN is not auto-filled
+}}
                   className={`flex flex-col rounded-xl border p-2.5 text-left transition-all ${
                     selectedEmployee?.id === emp.id
                       ? 'border-emerald-600 bg-emerald-50 ring-1 ring-emerald-500/20'
@@ -445,18 +448,18 @@ export const KioskTimeclock: React.FC<KioskTimeclockProps> = ({
           <div className="border-t border-slate-200 pt-4">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <button
-                type="button"
-                disabled={!selectedEmployee}
-                onClick={() => handleExecutePunch('clock_in')}
-                className="flex flex-col items-center justify-center gap-1.5 rounded-2xl bg-emerald-600 p-3.5 text-white shadow hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-              >
-                <Play className="h-5 w-5" />
-                <span className="text-xs font-bold uppercase tracking-wider">Clock In</span>
-              </button>
+  type="button"
+  disabled={!selectedEmployee || enteredPin !== selectedEmployee.pinCode}
+  onClick={() => handleExecutePunch('clock_in')}
+  className="flex flex-col items-center justify-center gap-1.5 rounded-2xl bg-emerald-600 p-3.5 text-white shadow hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+>
+  <Play className="h-5 w-5" />
+  <span className="text-xs font-bold uppercase tracking-wider">Clock In</span>
+</button>
 
               <button
                 type="button"
-                disabled={!selectedEmployee || selectedEmployee.currentPunchStatus !== 'clocked_in'}
+                disabled={!selectedEmployee || enteredPin !== selectedEmployee.pinCode}
                 onClick={() => handleExecutePunch('break_start')}
                 className="flex flex-col items-center justify-center gap-1.5 rounded-2xl bg-amber-500 p-3.5 text-white shadow hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
               >
@@ -466,7 +469,7 @@ export const KioskTimeclock: React.FC<KioskTimeclockProps> = ({
 
               <button
                 type="button"
-                disabled={!selectedEmployee || selectedEmployee.currentPunchStatus !== 'on_break'}
+                disabled={!selectedEmployee || enteredPin !== selectedEmployee.pinCode}
                 onClick={() => handleExecutePunch('break_end')}
                 className="flex flex-col items-center justify-center gap-1.5 rounded-2xl bg-teal-600 p-3.5 text-white shadow hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
               >
@@ -476,7 +479,7 @@ export const KioskTimeclock: React.FC<KioskTimeclockProps> = ({
 
               <button
                 type="button"
-                disabled={!selectedEmployee || selectedEmployee.currentPunchStatus === 'clocked_out'}
+                disabled={!selectedEmployee || enteredPin !== selectedEmployee.pinCode}
                 onClick={() => handleExecutePunch('clock_out')}
                 className="flex flex-col items-center justify-center gap-1.5 rounded-2xl bg-rose-600 p-3.5 text-white shadow hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
               >
