@@ -633,18 +633,35 @@ export default function App() {
     }
   };
 
-  // Automatically check for embedded Welcome/Recovery link parameters (?cloudUrl=...&pubKey=...)
+  // Automatically check for encoded instant sign-in token (?setup=...)
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
+    const setupToken = params.get('setup');
     const urlParam = params.get('cloudUrl');
     const keyParam = params.get('pubKey');
-    const providerParam = params.get('provider') as 'supabase' | 'firebase' | 'local_relay' | null;
-    const orgParam = params.get('orgName');
 
-    if (urlParam && keyParam) {
+    if (setupToken) {
+      try {
+        const jsonStr = decodeURIComponent(atob(setupToken));
+        const config = JSON.parse(jsonStr);
+        if (config && config.u && config.k) {
+          setReconnectUrl(config.u);
+          setReconnectPubKey(config.k);
+          if (config.p) setReconnectProvider(config.p);
+
+          // Instant Cloud Reconnection
+          handleCloudReconnect(config.u, config.k, config.p || undefined, config.o || undefined);
+        }
+      } catch (err) {
+        console.warn('Failed to parse setup token:', err);
+      }
+    } else if (urlParam && keyParam) {
+      // Backward compatibility for legacy URL params
       setReconnectUrl(urlParam);
       setReconnectPubKey(keyParam);
+      const providerParam = params.get('provider') as 'supabase' | 'firebase' | 'local_relay' | null;
+      const orgParam = params.get('orgName');
       if (providerParam) setReconnectProvider(providerParam);
       handleCloudReconnect(urlParam, keyParam, providerParam || undefined, orgParam || undefined);
     }

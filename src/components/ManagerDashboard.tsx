@@ -607,14 +607,63 @@ const newEmployee: Employee = {
     }
   };
 
+  // Helper to construct the embedded Cloud Setup / Recovery Link and Welcome Message
+  const getStaffWelcomeMessage = (emp: { name: string; username: string; pin: string; tempPass?: string }) => {
+    const origin =
+      typeof window !== 'undefined'
+        ? `${window.location.origin}${window.location.pathname}`
+        : 'https://openschedule.app';
+
+    const cloudUrl = state.settings.cloudSync?.projectUrl || '';
+    const pubKey = state.settings.cloudSync?.apiKey || '';
+    const provider = state.settings.cloudSync?.provider || 'supabase';
+    const orgName = state.settings.orgName || 'Open Schedule';
+
+    // Package configuration into a compact token
+    const configObj = {
+      u: cloudUrl,
+      k: pubKey,
+      p: provider,
+      o: orgName,
+    };
+
+    let setupLink = origin;
+    try {
+      const jsonStr = JSON.stringify(configObj);
+      const encodedToken = btoa(encodeURIComponent(jsonStr));
+      setupLink = `${origin}?setup=${encodedToken}`;
+    } catch {
+      // fallback if btoa fails
+      const params = new URLSearchParams();
+      if (cloudUrl) params.set('cloudUrl', cloudUrl);
+      if (pubKey) params.set('pubKey', pubKey);
+      if (orgName) params.set('orgName', orgName);
+      setupLink = `${origin}?${params.toString()}`;
+    }
+
+    const passLine = emp.tempPass
+      ? `• Temporary Password: ${emp.tempPass} (You will create your own password on first sign-in)\n`
+      : `• Password: Use your existing password (or ask your manager if you need a reset)\n`;
+
+    return (
+      `Welcome to ${orgName}, ${emp.name || 'Team Member'}!\n\n` +
+      `Here is your Open Schedule login information:\n` +
+      `• Employee Name: ${emp.name || 'Team Member'}\n` +
+      `• Username: ${emp.username.trim().toLowerCase()}\n` +
+      passLine +
+      `• Kiosk PIN: ${emp.pin}\n` +
+      `• Instant Sign-In & Setup Link: ${setupLink}\n\n` +
+      `(Save this link! Clicking it automatically links your app to our secure database workspace.)`
+    );
+  };
+
   const handleCopyStaffLoginCard = (emp: { name: string; username: string; pin: string; tempPass?: string }) => {
-    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://openschedule.app';
-    const text = `Hi ${emp.name}! Here is your login for Open Schedule:\n• Web App: ${origin}\n• Username: ${emp.username}\n• Temporary Password: ${emp.tempPass || 'password123'}\n• Kiosk PIN: ${emp.pin}\nPlease clock in and check your upcoming schedule!`;
+    const text = getStaffWelcomeMessage(emp);
     if (navigator.clipboard) {
       navigator.clipboard.writeText(text);
     }
-    setCopyFeedback(emp.username);
-    setTimeout(() => setCopyFeedback(null), 2500);
+    setCopyFeedback(`✓ Copied welcome message & setup link for ${emp.name || emp.username}!`);
+    setTimeout(() => setCopyFeedback(null), 3500);
   };
 
   // Add / Edit Shift
@@ -1630,7 +1679,7 @@ const newEmployee: Employee = {
   const emp = state.employees.find((e) => e.id === s.employeeId);
   
   // Apply employee's permanent color if published, or amber styling if draft
-  const showColors = state.settings.featureToggles.showEmployeeColors ?? true;
+  const showColors = (state.settings.featureToggles as any)?.showEmployeeColors ?? true;
 
 const shiftCardColor = isDraft 
   ? 'border-amber-300 bg-amber-50/70 text-amber-900' 
@@ -2042,22 +2091,40 @@ const shiftCardColor = isDraft
               </button>
             </div>
 
-            {/* Printable Onboarding Card */}
+            {/* Printable Onboarding Card & Copyable Welcome Text Box */}
             {onboardingCardData && (
-              <div className="rounded-2xl border border-emerald-300 bg-emerald-50 p-6 shadow-sm">
-                <div className="flex items-center justify-between mb-3 border-b border-emerald-200 pb-2">
+              <div className="rounded-2xl border border-emerald-300 bg-emerald-50 p-6 shadow-sm space-y-4">
+                <div className="flex items-center justify-between border-b border-emerald-200 pb-3">
                   <div className="flex items-center gap-2">
                     <UserCheck className="h-5 w-5 text-emerald-700" />
-                    <h3 className="font-bold text-slate-900 text-sm">Printable Staff Login Card</h3>
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-sm">
+                        New Staff Welcome Info & Setup Link
+                      </h3>
+                      <p className="text-[11px] text-emerald-800">
+                        Copy and text or email this box to {onboardingCardData.name} so they can connect and set their password.
+                      </p>
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setOnboardingCardData(null)}
-                    className="text-slate-400 hover:text-slate-700"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleCopyStaffLoginCard(onboardingCardData)}
+                      className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow hover:bg-emerald-700 transition-colors cursor-pointer"
+                    >
+                      <Check className="h-3.5 w-3.5" />
+                      <span>Copy Welcome Message & Link</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOnboardingCardData(null)}
+                      className="text-slate-400 hover:text-slate-700 p-1"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
+
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
                   <div>
                     <span className="text-slate-500">Staff Member:</span>
@@ -2077,6 +2144,20 @@ const shiftCardColor = isDraft
                     <span className="text-slate-500">Kiosk PIN:</span>
                     <div className="font-mono font-bold text-emerald-800 text-sm">{onboardingCardData.pin}</div>
                   </div>
+                </div>
+
+                {/* Small Text Box with Full Welcome Info & Embedded Setup Link */}
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-emerald-900 mb-1">
+                    Welcome Message & Embedded Cloud Setup Link:
+                  </label>
+                  <textarea
+                    readOnly
+                    rows={6}
+                    value={getStaffWelcomeMessage(onboardingCardData)}
+                    onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+                    className="w-full rounded-xl border border-emerald-300 bg-white p-3 font-mono text-xs text-slate-800 shadow-inner focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
                 </div>
               </div>
             )}
@@ -3814,20 +3895,56 @@ const shiftCardColor = isDraft
                 </div>
               </div>
 
+              {editingStaffId && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-emerald-950">
+                      Updated Welcome Message & Setup Link
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleCopyStaffLoginCard({
+                          name: staffName,
+                          username: staffUsername,
+                          tempPass: staffTempPassword.trim() || undefined,
+                          pin: staffPin,
+                        })
+                      }
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white shadow-xs hover:bg-emerald-700 transition-colors cursor-pointer"
+                    >
+                      <Send className="h-3 w-3" />
+                      <span>Copy Updated Message & Link</span>
+                    </button>
+                  </div>
+                  <textarea
+                    readOnly
+                    rows={4}
+                    value={getStaffWelcomeMessage({
+                      name: staffName,
+                      username: staffUsername,
+                      tempPass: staffTempPassword.trim() || undefined,
+                      pin: staffPin,
+                    })}
+                    onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+                    className="w-full rounded-lg border border-emerald-200 bg-white p-2 font-mono text-[10px] text-slate-700 focus:outline-none"
+                  />
+                </div>
+              )}
+
               <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setShiftModalOpen(false)}
+                  onClick={() => setStaffModalOpen(false)}
                   className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100"
                 >
                   Cancel
                 </button>
                 <button
-                  type="button"
-                  onClick={handleSaveShift}
+                  type="submit"
                   className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700 shadow"
                 >
-                  Save Shift
+                  {editingStaffId ? 'Update Team Member' : 'Save & Create Account'}
                 </button>
               </div>
             </div>
@@ -3964,6 +4081,43 @@ const shiftCardColor = isDraft
                   ))}
                 </div>
               </div>
+
+              {editingStaffId && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 space-y-2 mt-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-emerald-950">
+                      Updated Welcome Message & Setup Link
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleCopyStaffLoginCard({
+                          name: staffName,
+                          username: staffUsername,
+                          tempPass: staffTempPassword.trim() || undefined,
+                          pin: staffPin,
+                        })
+                      }
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white shadow-xs hover:bg-emerald-700 transition-colors cursor-pointer"
+                    >
+                      <Send className="h-3 w-3" />
+                      <span>Copy Updated Message & Link</span>
+                    </button>
+                  </div>
+                  <textarea
+                    readOnly
+                    rows={4}
+                    value={getStaffWelcomeMessage({
+                      name: staffName,
+                      username: staffUsername,
+                      tempPass: staffTempPassword.trim() || undefined,
+                      pin: staffPin,
+                    })}
+                    onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+                    className="w-full rounded-lg border border-emerald-200 bg-white p-2 font-mono text-[10px] text-slate-700 focus:outline-none"
+                  />
+                </div>
+              )}
 
               <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
                 <button
