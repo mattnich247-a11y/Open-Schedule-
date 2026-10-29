@@ -2130,6 +2130,16 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => {
+                      if (wizardStep === 3) {
+                      if (wizardDepartments.length === 0) {
+                       setWizardError('Please add at least 1 department before proceeding.');
+                        return;
+                          }
+                      if (wizardRoles.length === 0) {
+                       setWizardError('Please add at least 1 job role before proceeding.');
+                       return;
+                        }
+                       }
                       setWizardError('');
                       if (wizardStep === 2 && !wizardOrgName.trim()) {
                         setWizardError('Please enter your business name.');

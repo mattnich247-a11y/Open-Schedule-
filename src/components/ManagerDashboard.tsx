@@ -517,8 +517,18 @@ const handleManagerSubmitTimeOff = (e: React.FormEvent) => {
     e.preventDefault();
     if (!staffName || !staffUsername) return;
 
+    // Check for duplicate PIN across other employees
+    const trimmedPin = staffPin.trim();
+    const duplicatePinEmp = state.employees.find(
+      (emp) => emp.pinCode === trimmedPin && emp.id !== editingStaffId
+    );
+    if (duplicatePinEmp) {
+      alert(`⚠️ PIN Conflict: The 4-digit PIN "${trimmedPin}" is already assigned to ${duplicatePinEmp.name}. Each employee must have a unique PIN.`);
+      return;
+    }
+
     if (editingStaffId) {
-      // Update existing
+      // ... existing edit logic ...
       const existing = state.employees.find((e) => e.id === editingStaffId);
       if (!existing) return;
 
@@ -3105,6 +3115,185 @@ const shiftCardColor = isDraft
         {/* TAB 7: Settings (Business, Location, Cloud Sync & App Guides) */}
         {activeTab === 'settings' && (
           <div className="space-y-6 max-w-4xl">
+            {/* Dynamic Departments, Roles & Skill Tags Management */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-5">
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm">Departments, Job Roles & Skill Tags</h3>
+                <p className="text-xs text-slate-500">
+                  Manage your company's organizational structure post-setup. You must maintain at least 1 department and 1 job role.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                {/* Departments Manager */}
+                <div className="rounded-xl border border-slate-200 p-3 space-y-3 bg-slate-50/50">
+                  <div className="font-bold text-slate-900">Departments</div>
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                    {state.departments.map((d) => (
+                      <div key={d.id} className="flex items-center justify-between bg-white px-2.5 py-1.5 rounded-lg border border-slate-200">
+                        <span className="font-medium text-slate-800">{d.name}</span>
+                        {state.departments.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onUpdateState({
+                                ...state,
+                                departments: state.departments.filter((dept) => dept.id !== d.id),
+                              });
+                            }}
+                            className="text-slate-400 hover:text-rose-600 font-bold"
+                            title="Delete department"
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      id="newDeptInputManager"
+                      placeholder="New department..."
+                      className="flex-1 rounded-lg border border-slate-300 px-2.5 py-1 text-xs bg-white text-slate-900"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const input = document.getElementById('newDeptInputManager') as HTMLInputElement;
+                        if (input && input.value.trim()) {
+                          const newDept = {
+                            id: `dept_${Date.now()}`,
+                            name: input.value.trim(),
+                            color: '#059669',
+                          };
+                          onUpdateState({
+                            ...state,
+                            departments: [...state.departments, newDept],
+                          });
+                          input.value = '';
+                        }
+                      }}
+                      className="rounded-lg bg-emerald-600 px-3 py-1 font-bold text-white hover:bg-emerald-700"
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+
+                {/* Job Roles Manager */}
+                <div className="rounded-xl border border-slate-200 p-3 space-y-3 bg-slate-50/50">
+                  <div className="font-bold text-slate-900">Job Roles</div>
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                    {state.roles.map((r) => (
+                      <div key={r.id} className="flex items-center justify-between bg-white px-2.5 py-1.5 rounded-lg border border-slate-200">
+                        <span className="font-medium text-slate-800">{r.name}</span>
+                        {state.roles.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onUpdateState({
+                                ...state,
+                                roles: state.roles.filter((role) => role.id !== r.id),
+                              });
+                            }}
+                            className="text-slate-400 hover:text-rose-600 font-bold"
+                            title="Delete role"
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      id="newRoleInputManager"
+                      placeholder="New role..."
+                      className="flex-1 rounded-lg border border-slate-300 px-2.5 py-1 text-xs bg-white text-slate-900"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const input = document.getElementById('newRoleInputManager') as HTMLInputElement;
+                        if (input && input.value.trim()) {
+                          const newRole = {
+                            id: `role_${Date.now()}`,
+                            name: input.value.trim(),
+                            departmentId: state.departments[0]?.id || 'dept_1',
+                            color: '#2563eb',
+                          };
+                          onUpdateState({
+                            ...state,
+                            roles: [...state.roles, newRole],
+                          });
+                          input.value = '';
+                        }
+                      }}
+                      className="rounded-lg bg-emerald-600 px-3 py-1 font-bold text-white hover:bg-emerald-700"
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+
+                {/* Skill & Shift Tags Manager */}
+                <div className="rounded-xl border border-slate-200 p-3 space-y-3 bg-slate-50/50">
+                  <div className="font-bold text-slate-900">Skill & Certification Tags</div>
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                    {state.skillTags.map((t) => (
+                      <div key={t.id} className="flex items-center justify-between bg-white px-2.5 py-1.5 rounded-lg border border-slate-200">
+                        <span className="font-medium text-slate-800">{t.name}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onUpdateState({
+                              ...state,
+                              skillTags: state.skillTags.filter((tag) => tag.id !== t.id),
+                            });
+                          }}
+                          className="text-slate-400 hover:text-rose-600 font-bold"
+                          title="Delete tag"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      id="newTagInputManager"
+                      placeholder="New skill tag..."
+                      className="flex-1 rounded-lg border border-slate-300 px-2.5 py-1 text-xs bg-white text-slate-900"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const input = document.getElementById('newTagInputManager') as HTMLInputElement;
+                        if (input && input.value.trim()) {
+                          const newTag = {
+                            id: `tag_${Date.now()}`,
+                            name: input.value.trim(),
+                            category: 'skill' as const,
+                            color: '#d97706',
+                          };
+                          onUpdateState({
+                            ...state,
+                            skillTags: [...state.skillTags, newTag],
+                          });
+                          input.value = '';
+                        }
+                      }}
+                      className="rounded-lg bg-emerald-600 px-3 py-1 font-bold text-white hover:bg-emerald-700"
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
             {/* Settings Header with Sub-tabs */}
             <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-3">
               <div>
