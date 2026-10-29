@@ -935,17 +935,216 @@ const newEmployee: Employee = {
 
           {/* Quick Header Actions */}
           <div className="flex items-center gap-2">
-            {/* Hidden File Input for .openschedule Import */}
-            <label className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer shadow-sm transition-colors">
-              <Upload className="h-3.5 w-3.5 text-slate-500" />
-              <span>Import .openschedule</span>
-              <input
-                type="file"
-                accept=".openschedule,.json"
-                onChange={handleImportBackupFile}
-                className="hidden"
-              />
-            </label>
+            {/* Export Weekly CSV Data */}
+            <button
+              type="button"
+              onClick={() => {
+                try {
+                  const escapeCsv = (val: any) =>
+                    `"${String(val ?? '').replace(/"/g, '""')}"`;
+
+                  const safeEmployees = Array.isArray(state.employees) ? state.employees : [];
+                  const safeShifts = Array.isArray(state.shifts) ? state.shifts : [];
+
+                  // Filter shifts to the currently selected week
+                  const weekShifts = safeShifts.filter((s) => currentWeekDateSet.has(s.date));
+
+                  const csvRows: (string | number)[][] = [];
+
+                  // 1. Header Row for Employee Weekly Summary & Shift Breakdown
+                  csvRows.push([
+                    'Employee Name',
+                    'Hourly Pay Rate ($)',
+                    'Department Tags',
+                    'Role Tags',
+                    'Certification Tags',
+                    ...weekDays.map((d) => `${d.dayName.slice(0, 3)} (${d.date})`),
+                    'All Shifts Breakdown (Date & Hours)',
+                    'Regular Hours (<=40h)',
+                    'Overtime Hours (>40h)',
+                    'Total Scheduled Hours',
+                    'Regular Pay ($)',
+                    'Overtime Pay (1.5x $)',
+                    'Total Employee Cost ($)',
+                  ]);
+
+                  let grandTotalRegHours = 0;
+                  let grandTotalOtHours = 0;
+                  let grandTotalHours = 0;
+                  let grandTotalRegPay = 0;
+                  let grandTotalOtPay = 0;
+                  let grandTotalWeeklyCost = 0;
+
+                  // 2. Build a row for each employee
+                  safeEmployees.forEach((emp) => {
+                    const payRate = Number(emp.baseHourlyRate) || 0;
+
+                    // Resolve Department, Role, and Certification Tag names
+                    const deptNames = (emp.departmentIds || [])
+                      .map((id) => deptMap.get(id)?.name || id)
+                      .join(', ') || 'None';
+
+                    const roleNames = (emp.roleIds || [])
+                      .map((id) => roleMap.get(id)?.name || id)
+                      .join(', ') || 'None';
+
+                    const certNames = (emp.tags || [])
+                      .map((id) => tagMap.get(id)?.name || id)
+                      .join(', ') || 'None';
+
+                    // Get this employee's shifts for the selected week, sorted by date & start time
+                    const empWeekShifts = weekShifts
+                      .filter((s) => s.employeeId === emp.id)
+                      .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+
+                    // Breakdown per day column (Sun - Sat)
+                    const dailyBreakdownCells = weekDays.map((d) => {
+                      const dayShifts = empWeekShifts.filter((s) => s.date === d.date);
+                      if (dayShifts.length === 0) return escapeCsv('Off');
+                      const details = dayShifts
+                        .map((s) => {
+                          const hrs = calculateShiftHours(s.startTime, s.endTime);
+                          const rName = roleMap.get(s.roleId)?.name || 'Shift';
+                          return `${d.date}: ${formatShiftRange12H(s.startTime, s.endTime)} (${hrs.toFixed(2)}h - ${rName})`;
+                        })
+                        .join(' | ');
+                      return escapeCsv(details);
+                    });
+
+                    // Combined list of all shifts with Date and Hours
+                    const allShiftsString =
+                      empWeekShifts.length > 0
+                        ? empWeekShifts
+                            .map((s) => {
+                              const hrs = calculateShiftHours(s.startTime, s.endTime);
+                              const rName = roleMap.get(s.roleId)?.name || 'Shift';
+                              return `${s.date}: ${hrs.toFixed(2)}h (${formatShiftRange12H(s.startTime, s.endTime)} - ${rName})`;
+                            })
+                            .join('; ')
+                        : 'No shifts scheduled';
+
+                    // Calculate weekly hours and cost (Overtime > 40 hrs at 1.5x pay)
+                    const totalEmpHours = empWeekShifts.reduce(
+                      (sum, s) => sum + calculateShiftHours(s.startTime, s.endTime),
+                      0
+                    );
+                    const regHours = Math.min(totalEmpHours, 40);
+                    const otHours = Math.max(0, totalEmpHours - 40);
+
+                    const regPay = regHours * payRate;
+                    const otPay = otHours * (payRate * 1.5);
+                    const totalEmpCost = regPay + otPay;
+
+                    grandTotalRegHours += regHours;
+                    grandTotalOtHours += otHours;
+                    grandTotalHours += totalEmpHours;
+                    grandTotalRegPay += regPay;
+                    grandTotalOtPay += otPay;
+                    grandTotalWeeklyCost += totalEmpCost;
+
+                    csvRows.push([
+                      escapeCsv(emp.name),
+                      payRate.toFixed(2),
+                      escapeCsv(deptNames),
+                      escapeCsv(roleNames),
+                      escapeCsv(certNames),
+                      ...dailyBreakdownCells,
+                      escapeCsv(allShiftsString),
+                      regHours.toFixed(2),
+                      otHours.toFixed(2),
+                      totalEmpHours.toFixed(2),
+                      regPay.toFixed(2),
+                      otPay.toFixed(2),
+                      totalEmpCost.toFixed(2),
+                    ]);
+                  });
+
+                  // 3. Weekly Grand Total Row
+                  csvRows.push([
+                    escapeCsv('TOTAL WEEKLY EMPLOYEE COST & HOURS'),
+                    '',
+                    '',
+                    '',
+                    '',
+                    ...weekDays.map(() => ''),
+                    '',
+                    grandTotalRegHours.toFixed(2),
+                    grandTotalOtHours.toFixed(2),
+                    grandTotalHours.toFixed(2),
+                    grandTotalRegPay.toFixed(2),
+                    grandTotalOtPay.toFixed(2),
+                    grandTotalWeeklyCost.toFixed(2),
+                  ]);
+
+                  // 4. Individual Shift-by-Shift Breakdown Section
+                  csvRows.push([]);
+                  csvRows.push([escapeCsv(`INDIVIDUAL SHIFT BREAKDOWN (WEEK OF ${weekStart})`)]);
+                  csvRows.push([
+                    'Shift Date',
+                    'Employee Name',
+                    'Hourly Pay Rate ($)',
+                    'Department',
+                    'Shift Role',
+                    'Employee Certifications',
+                    'Start Time',
+                    'End Time',
+                    'Shift Hours',
+                    'Base Shift Cost ($)',
+                    'Status',
+                  ]);
+
+                  const sortedWeekShifts = [...weekShifts].sort(
+                    (a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime)
+                  );
+
+                  sortedWeekShifts.forEach((s) => {
+                    const emp = s.employeeId ? empMap.get(s.employeeId) : undefined;
+                    const payRate = emp ? Number(emp.baseHourlyRate) || 0 : 0;
+                    const hrs = calculateShiftHours(s.startTime, s.endTime);
+                    const deptName = deptMap.get(s.departmentId)?.name || s.departmentId || 'General';
+                    const roleName = roleMap.get(s.roleId)?.name || s.roleId || 'Standard';
+                    const certs = emp
+                      ? (emp.tags || []).map((id) => tagMap.get(id)?.name || id).join(', ') || 'None'
+                      : 'N/A';
+
+                    csvRows.push([
+                      escapeCsv(s.date),
+                      escapeCsv(emp ? emp.name : 'Open / Unassigned Shift'),
+                      payRate.toFixed(2),
+                      escapeCsv(deptName),
+                      escapeCsv(roleName),
+                      escapeCsv(certs),
+                      escapeCsv(formatTime12H(s.startTime)),
+                      escapeCsv(formatTime12H(s.endTime)),
+                      hrs.toFixed(2),
+                      (hrs * payRate).toFixed(2),
+                      escapeCsv(s.status.toUpperCase()),
+                    ]);
+                  });
+
+                  // Convert rows to CSV string format
+                  const csvContent = csvRows.map((row) => row.join(',')).join('\n');
+
+                  // Create a Blob and trigger a secure download
+                  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                  const url = URL.createObjectURL(blob);
+                  const link = document.createElement('a');
+                  link.setAttribute('href', url);
+                  link.setAttribute('download', `openschedule-weekly-payroll-${weekStart}.csv`);
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+                  URL.revokeObjectURL(url);
+                } catch (err) {
+                  console.error('Failed to export CSV:', err);
+                  alert('Could not generate CSV. Check console for details.');
+                }
+              }}
+              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer shadow-sm transition-colors"
+            >
+              <Download className="h-3.5 w-3.5 text-emerald-600" />
+              <span>Export Week CSV</span>
+            </button>
 
             {/* Google Drive / OneDrive Auto-Save Connect */}
             <button
