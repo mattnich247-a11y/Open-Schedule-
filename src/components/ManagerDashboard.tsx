@@ -125,6 +125,7 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
   onSimulateTamperAttack,
 }) => {
   const [activeTab, setActiveTab] = useState<'roster' | 'staff' | 'timesheets' | 'security' | 'ai' | 'chat' | 'settings'>('roster');
+  const [dismissedConflicts, setDismissedConflicts] = useState<string[]>([]);
 
   const handleFactoryReset = () => {
   if (window.confirm("WARNING: This will completely wipe out the company portal, delete all staff accounts, remove usernames/passwords, and reset company settings. Are you sure?")) {
@@ -1360,24 +1361,41 @@ const newEmployee: Employee = {
             )}
 
             {/* Conflicts Warning */}
-            {conflicts.length > 0 && (
-              <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 shadow-sm">
-                <div className="flex items-center gap-2 text-amber-900 font-bold text-xs uppercase tracking-wider mb-2">
-                  <AlertTriangle className="h-4 w-4 text-amber-600" />
-                  <span>Schedule Conflicts Flagged ({conflicts.length})</span>
-                </div>
-                <div className="space-y-1.5 max-h-32 overflow-y-auto text-xs text-amber-800">
-                  {conflicts.map((c) => (
-                    <div key={c.id} className="flex items-center justify-between">
-                      <span>• {c.message}</span>
-                      <span className="rounded-full bg-amber-200/80 px-2 py-0.2 text-[10px] font-bold text-amber-900 uppercase">
-                        {c.type.replace('_', ' ')}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+{(() => {
+  // Filter out any conflicts that the manager has dismissed
+  const activeConflicts = conflicts.filter((c) => !dismissedConflicts.includes(c.id));
+  
+  if (activeConflicts.length === 0) return null;
+
+  return (
+    <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 shadow-sm">
+      <div className="flex items-center gap-2 text-amber-900 font-bold text-xs uppercase tracking-wider mb-2">
+        <AlertTriangle className="h-4 w-4 text-amber-600" />
+        <span>Schedule Conflicts Flagged ({activeConflicts.length})</span>
+      </div>
+      <div className="space-y-1.5 max-h-32 overflow-y-auto text-xs text-amber-800">
+        {activeConflicts.map((c) => (
+          <div key={c.id} className="flex items-center justify-between gap-2">
+            <span>{c.message}</span>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <span className="rounded-full bg-amber-200/80 px-2 py-0.5 text-[10px] font-bold text-amber-900 uppercase">
+                {c.type.replace('_', ' ')}
+              </span>
+              <button
+                type="button"
+                onClick={() => setDismissedConflicts((prev) => [...prev, c.id])}
+                className="text-[10px] font-bold text-amber-700 hover:text-amber-900 bg-amber-200/50 hover:bg-amber-200 px-1.5 py-0.5 rounded transition-colors"
+                title="Dismiss this warning"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+})()}
 
             {/* Weekly Roster Table (12-Hour AM/PM Format) */}
             <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
