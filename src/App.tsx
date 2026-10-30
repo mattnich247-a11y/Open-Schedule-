@@ -1548,11 +1548,21 @@ export default function App() {
               {/* STEP 1: Choose Your Features */}
               {wizardStep === 1 && (
                 <div className="space-y-5">
-                  <div className="border-b border-slate-100 pb-2">
-                    <h3 className="font-bold text-slate-900 text-sm">Step 1: Choose Your Features</h3>
-                    <p className="text-xs text-slate-500">
-                      Select which capabilities you want active right now. You can change these anytime in Settings.
-                    </p>
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-sm">Step 1: Choose Your Features</h3>
+                      <p className="text-xs text-slate-500">
+                        Select which capabilities you want active right now. You can change these anytime in Settings.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => window.open('/employee-help.pdf', '_blank', 'noopener,noreferrer')}
+                      className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-xs transition-colors cursor-pointer"
+                    >
+                      <FileText className="h-3.5 w-3.5 text-emerald-600" />
+                      <span>Help and Setup Guide</span>
+                    </button>
                   </div>
 
                   <div className="space-y-3">

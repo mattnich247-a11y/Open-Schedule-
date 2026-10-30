@@ -3465,40 +3465,51 @@ const shiftCardColor = isDraft
                 <p className="text-xs text-slate-500">Configure operational rules, cloud sync, and view setup guides.</p>
               </div>
 
-              <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1 text-xs">
+              <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => setSettingsActiveSubTab('general')}
-                  className={`rounded-lg px-3 py-1 font-bold transition-all ${
-                    settingsActiveSubTab === 'general'
-                      ? 'bg-white text-slate-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
+                  onClick={() => window.open('/employee-help.pdf', '_blank', 'noopener,noreferrer')}
+                  className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-xs transition-colors cursor-pointer"
                 >
-                  General & Rules
+                  <FileText className="h-4 w-4 text-emerald-600" />
+                  <span>Help and Setup Guide</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setSettingsActiveSubTab('cloud')}
-                  className={`rounded-lg px-3 py-1 font-bold transition-all ${
-                    settingsActiveSubTab === 'cloud'
-                      ? 'bg-white text-slate-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Cloud Sync & Privacy
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSettingsActiveSubTab('help')}
-                  className={`rounded-lg px-3 py-1 font-bold transition-all ${
-                    settingsActiveSubTab === 'help'
-                      ? 'bg-white text-slate-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  App Guide & Help
-                </button>
+
+                <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setSettingsActiveSubTab('general')}
+                    className={`rounded-lg px-3 py-1 font-bold transition-all ${
+                      settingsActiveSubTab === 'general'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    General & Rules
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSettingsActiveSubTab('cloud')}
+                    className={`rounded-lg px-3 py-1 font-bold transition-all ${
+                      settingsActiveSubTab === 'cloud'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Cloud Sync & Privacy
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSettingsActiveSubTab('help')}
+                    className={`rounded-lg px-3 py-1 font-bold transition-all ${
+                      settingsActiveSubTab === 'help'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    App Guide & Help
+                  </button>
+                </div>
               </div>
             </div>
 
