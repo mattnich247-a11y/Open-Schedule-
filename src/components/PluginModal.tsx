@@ -3,24 +3,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   Check,
-  FileSpreadsheet,
+  Download,
   Globe,
-  HardDrive,
   Layers,
+  Plus,
   Play,
-  RotateCw,
-  Terminal,
+  Trash2,
   ToggleLeft,
   ToggleRight,
+  Upload,
   X,
 } from 'lucide-react';
 import { OrganizationState, PluginDefinition } from '../types';
-import { PayPeriodApprovalEvent, PluginManager } from '../pluginManager';
-import { calculateShiftHours } from '../schedulerEngine';
-import { downloadFile } from '../calendarAndExport';
+import { COMMUNITY_PLUGINS_REGISTRY } from '../communityPlugins';
 
 interface PluginModalProps {
   isOpen: boolean;
@@ -35,285 +33,277 @@ export const PluginModal: React.FC<PluginModalProps> = ({
   state,
   onUpdatePlugins,
 }) => {
-  const [selectedPluginId, setSelectedPluginId] = useState<string>('plugin-payroll-csv');
-  const [activeTab, setActiveTab] = useState<'overview' | 'inspector' | 'logs'>('overview');
-  const [testOutput, setTestOutput] = useState<string | null>(null);
+  const [activeMainTab, setActiveMainTab] = useState<'installed' | 'community' | 'upload'>('installed');
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   if (!isOpen) return null;
 
-  const plugins = state.plugins;
-  const selectedPlugin = plugins.find((p) => p.id === selectedPluginId) || plugins[0];
+  const installedPlugins = state.plugins;
 
+  // Toggle plugin active state
   const handleToggle = (pluginId: string) => {
-    const updated = plugins.map((p) =>
+    const updated = installedPlugins.map((p) =>
       p.id === pluginId ? { ...p, enabled: !p.enabled } : p
     );
     onUpdatePlugins(updated);
   };
 
-  const handleRunTest = (pluginId: string) => {
-    // Build sample event from current roster
-    const empSummaries = state.employees.map((emp) => {
-      const empShifts = state.shifts.filter((s) => s.employeeId === emp.id && s.status === 'published');
-      const totalHrs = empShifts.reduce((acc, s) => acc + calculateShiftHours(s.startTime, s.endTime), 0);
-      const regularHours = Math.min(totalHrs, state.settings.weeklyOvertimeHours);
-      const overtimeHours = Math.max(0, totalHrs - state.settings.weeklyOvertimeHours);
-      const grossPay =
-        regularHours * emp.baseHourlyRate + overtimeHours * emp.baseHourlyRate * 1.5;
-      return {
-        employeeId: emp.id,
-        employeeName: emp.name,
-        regularHours,
-        overtimeHours,
-        hourlyRate: emp.baseHourlyRate,
-        grossPay,
-      };
-    });
+  // Remove plugin from dashboard
+  const handleRemovePlugin = (pluginId: string) => {
+    const updated = installedPlugins.filter((p) => p.id !== pluginId);
+    onUpdatePlugins(updated);
+    setSuccessMessage('Plugin removed successfully.');
+    setTimeout(() => setSuccessMessage(null), 3000);
+  };
 
-    const event: PayPeriodApprovalEvent = {
-      payPeriodStart: new Date().toISOString().slice(0, 10),
-      payPeriodEnd: new Date(Date.now() + 6 * 86400000).toISOString().slice(0, 10),
-      totalRegularHours: empSummaries.reduce((acc, e) => acc + e.regularHours, 0),
-      totalOvertimeHours: empSummaries.reduce((acc, e) => acc + e.overtimeHours, 0),
-      totalEstimatedGrossPay: empSummaries.reduce((acc, e) => acc + e.grossPay, 0),
-      employeeSummaries: empSummaries,
-    };
-
-    if (pluginId === 'plugin-payroll-csv') {
-      const csv = PluginManager.generatePayrollCsv(event);
-      setTestOutput(csv);
-      downloadFile('payroll_preview.csv', csv, 'text/csv');
-    } else if (pluginId === 'plugin-gusto-adp') {
-      const json = PluginManager.generateGustoAdpPayload(event, state.settings.orgName);
-      setTestOutput(JSON.stringify(json, null, 2));
-    } else if (pluginId === 'plugin-shift-webhook') {
-      const webhookPayload = {
-        event: 'schedule.published',
-        timestamp: new Date().toISOString(),
-        organization: state.settings.orgName,
-        totalShiftsPublished: state.shifts.length,
-        notificationTargets: state.employees.map((e) => ({
-          name: e.name,
-          username: e.username,
-          shiftsCount: state.shifts.filter((s) => s.employeeId === e.id).length,
-        })),
-      };
-      setTestOutput(JSON.stringify(webhookPayload, null, 2));
-    } else {
-      const analyticsPayload = {
-        event: 'sales_and_reservations_check',
-        grossSales: state.salesData.reduce((acc, s) => acc + s.grossSales, 0),
-        covers: state.reservationsData.reduce((acc, r) => acc + r.coversExpected, 0),
-        activeStaffCount: state.employees.filter((e) => e.currentPunchStatus === 'clocked_in').length,
-        summary: 'Connected to live sales and guest counts to guide staffing.',
-      };
-      setTestOutput(JSON.stringify(analyticsPayload, null, 2));
+  // Add prebuilt community plugin
+  const handleAddCommunityPlugin = (communityPlugin: PluginDefinition) => {
+    if (installedPlugins.some((p) => p.id === communityPlugin.id)) {
+      setSuccessMessage('Plugin is already added to your dashboard.');
+      setTimeout(() => setSuccessMessage(null), 3000);
+      return;
     }
+    const updated = [...installedPlugins, { ...communityPlugin, enabled: true }];
+    onUpdatePlugins(updated);
+    setSuccessMessage(`✓ Added "${communityPlugin.name}" to your dashboard!`);
+    setTimeout(() => setSuccessMessage(null), 3000);
+  };
+
+  // Handle .zip or code file upload
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string || '// Custom uploaded plugin code';
+      const pluginName = file.name.replace(/\.[^/.]+$/, '');
+      const newPlugin = {
+        id: `plugin_custom_${Date.now()}`,
+        name: pluginName,
+        description: `Custom plugin imported from file: ${file.name}`,
+        version: '1.0.0',
+        author: 'Custom Upload',
+        category: 'integrations',
+        enabled: true,
+      } as PluginDefinition;
+
+      Object.assign(newPlugin, { code: content });
+
+      onUpdatePlugins([...installedPlugins, newPlugin]);
+      setSuccessMessage(`✓ Successfully uploaded and installed "${pluginName}"!`);
+      setTimeout(() => setSuccessMessage(null), 3500);
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
-      <div className="flex h-[88vh] w-full max-w-4xl flex-col rounded-2xl border border-slate-200 bg-white text-slate-800 shadow-2xl overflow-hidden">
+      <div className="flex h-[85vh] w-full max-w-4xl flex-col rounded-3xl border border-slate-200 bg-white text-slate-800 shadow-2xl overflow-hidden animate-in fade-in">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4">
           <div className="flex items-center gap-3">
-            <div className="rounded-xl bg-emerald-100 p-2.5 text-emerald-700">
+            <div className="rounded-2xl bg-emerald-100 p-2.5 text-emerald-700">
               <Layers className="h-6 w-6" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-slate-900">Payroll & App Connections</h2>
+              <h2 className="text-lg font-bold text-slate-900">Plugin Marketplace & Manager</h2>
               <p className="text-xs text-slate-500">
-                Connect your timesheets directly with payroll programs, spreadsheets, and POS sales
+                Extend Open Schedule with prebuilt community integrations or custom code uploads
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="rounded-lg p-2 text-slate-400 hover:bg-slate-200 hover:text-slate-700 transition-colors"
+            className="rounded-xl p-2 text-slate-400 hover:bg-slate-200 hover:text-slate-700 transition-colors"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        {/* Body */}
-        <div className="grid flex-1 grid-cols-1 md:grid-cols-3 overflow-hidden">
-          {/* Sidebar */}
-          <div className="border-r border-slate-200 bg-slate-50/70 p-4 overflow-y-auto">
-            <div className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-500">
-              Available Connections ({plugins.length})
-            </div>
-            <div className="space-y-2">
-              {plugins.map((plugin) => (
-                <div
-                  key={plugin.id}
-                  onClick={() => setSelectedPluginId(plugin.id)}
-                  className={`cursor-pointer rounded-xl border p-3 transition-all ${
-                    selectedPluginId === plugin.id
-                      ? 'border-emerald-600 bg-white shadow-sm ring-1 ring-emerald-500/20'
-                      : 'border-slate-200 bg-white/70 hover:border-slate-300'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-bold text-sm text-slate-900">{plugin.name}</span>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleToggle(plugin.id);
-                      }}
-                      className="text-slate-400 hover:text-emerald-600"
-                    >
-                      {plugin.enabled ? (
-                        <ToggleRight className="h-6 w-6 text-emerald-600" />
-                      ) : (
-                        <ToggleLeft className="h-6 w-6 text-slate-400" />
-                      )}
-                    </button>
-                  </div>
-                  <p className="text-xs text-slate-500 line-clamp-2">{plugin.description}</p>
-                  <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
-                    <span>v{plugin.version}</span>
-                    <span className="capitalize px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-medium">
-                      {plugin.category}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
+        {/* Navigation Tabs */}
+        <div className="flex border-b border-slate-200 bg-slate-50/50 px-6 gap-2 pt-2">
+          <button
+            type="button"
+            onClick={() => setActiveMainTab('installed')}
+            className={`px-4 py-2 text-xs font-bold rounded-t-xl transition-all ${
+              activeMainTab === 'installed'
+                ? 'bg-white text-emerald-800 border-t border-x border-slate-200 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            Installed Plugins ({installedPlugins.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveMainTab('community')}
+            className={`px-4 py-2 text-xs font-bold rounded-t-xl transition-all ${
+              activeMainTab === 'community'
+                ? 'bg-white text-emerald-800 border-t border-x border-slate-200 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            🌐 Browse Community Plugins
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveMainTab('upload')}
+            className={`px-4 py-2 text-xs font-bold rounded-t-xl transition-all ${
+              activeMainTab === 'upload'
+                ? 'bg-white text-emerald-800 border-t border-x border-slate-200 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            📦 Add Plugin from .zip / Code File
+          </button>
+        </div>
+
+        {/* Toast Notification */}
+        {successMessage && (
+          <div className="mx-6 mt-4 rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800 flex items-center gap-2">
+            <Check className="h-4 w-4 text-emerald-600 shrink-0" />
+            <span>{successMessage}</span>
           </div>
+        )}
 
-          {/* Details & Test Run Area */}
-          <div className="col-span-2 flex flex-col p-6 overflow-y-auto bg-white">
-            {selectedPlugin && (
-              <div className="space-y-6">
-                <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-4">
-                  <div>
-                    <h3 className="text-base font-bold text-slate-900">{selectedPlugin.name}</h3>
-                    <p className="text-xs text-slate-500">
-                      Provided by: {selectedPlugin.author} • Category: {selectedPlugin.category}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleToggle(selectedPlugin.id)}
-                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                        selectedPlugin.enabled
-                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                          : 'bg-slate-100 text-slate-600 border border-slate-300'
-                      }`}
-                    >
-                      {selectedPlugin.enabled ? 'Active / On' : 'Turned Off'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleRunTest(selectedPlugin.id)}
-                      className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 transition-colors"
-                    >
-                      <Play className="h-3.5 w-3.5" />
-                      Test Run Connection
-                    </button>
-                  </div>
+        {/* Main Content Area */}
+        <div className="flex-1 overflow-y-auto p-6 bg-white">
+          {/* TAB 1: Installed Plugins */}
+          {activeMainTab === 'installed' && (
+            <div className="space-y-4">
+              {installedPlugins.length === 0 ? (
+                <div className="py-16 text-center text-xs text-slate-400 italic">
+                  No plugins installed. Browse Community Plugins or upload a .zip file to get started!
                 </div>
-
-                {/* Tabs */}
-                <div className="flex gap-2 border-b border-slate-200 pb-2">
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('overview')}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
-                      activeTab === 'overview'
-                        ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    How It Works
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('inspector')}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
-                      activeTab === 'inspector'
-                        ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Preview Output Data
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('logs')}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
-                      activeTab === 'logs'
-                        ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Recent Activity History ({state.pluginLogs.length})
-                  </button>
-                </div>
-
-                {/* Content */}
-                {activeTab === 'overview' && (
-                  <div className="space-y-4 text-xs text-slate-600">
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                      <h4 className="font-bold text-slate-900 mb-1 text-sm">Summary</h4>
-                      <p className="leading-relaxed">{selectedPlugin.description}</p>
-                    </div>
-
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                      <h4 className="font-bold text-slate-900 mb-2 text-sm">When This Connection Runs</h4>
-                      <ul className="space-y-2 list-disc list-inside">
-                        <li><strong>When Pay Periods Are Approved:</strong> Generates formatted payroll files ready to upload into payroll systems.</li>
-                        <li><strong>When Schedules Are Published:</strong> Sends updates and alerts to staff mobile devices.</li>
-                        <li><strong>When Shifts Are Clocked:</strong> Updates daily hours and compares against labor targets.</li>
-                      </ul>
-                    </div>
-                  </div>
-                )}
-
-                {activeTab === 'inspector' && (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between text-xs text-slate-500">
-                      <span>Data output generated from your active schedule:</span>
-                      <button
-                        type="button"
-                        onClick={() => handleRunTest(selectedPlugin.id)}
-                        className="text-emerald-700 font-semibold hover:underline flex items-center gap-1"
-                      >
-                        <RotateCw className="h-3 w-3" /> Re-test
-                      </button>
-                    </div>
-                    <pre className="max-h-72 overflow-auto rounded-xl border border-slate-200 bg-slate-900 p-4 font-mono text-xs text-emerald-400">
-                      {testOutput ||
-                        `// Click "Test Run Connection" above to generate a live preview of this export file or payload.`}
-                    </pre>
-                  </div>
-                )}
-
-                {activeTab === 'logs' && (
-                  <div className="space-y-2 max-h-72 overflow-y-auto">
-                    {state.pluginLogs.length === 0 ? (
-                      <p className="text-xs text-slate-400 italic">No activity recorded yet.</p>
-                    ) : (
-                      state.pluginLogs.map((log) => (
-                        <div
-                          key={log.id}
-                          className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs"
-                        >
-                          <div className="flex items-center justify-between text-[11px] text-slate-400 mb-1">
-                            <span className="font-bold text-emerald-700">[{log.pluginId}]</span>
-                            <span>{new Date(log.timestampIso).toLocaleTimeString()}</span>
-                          </div>
-                          <p className="text-slate-800 font-medium">{log.message}</p>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {installedPlugins.map((plugin) => (
+                    <div
+                      key={plugin.id}
+                      className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm flex flex-col justify-between"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <h3 className="font-bold text-sm text-slate-900">{plugin.name}</h3>
+                          <button
+                            type="button"
+                            onClick={() => handleToggle(plugin.id)}
+                            className="text-slate-400 hover:text-emerald-600"
+                            title="Toggle Individual Plugin"
+                          >
+                            {plugin.enabled ? (
+                              <ToggleRight className="h-6 w-6 text-emerald-600" />
+                            ) : (
+                              <ToggleLeft className="h-6 w-6 text-slate-400" />
+                            )}
+                          </button>
                         </div>
-                      ))
-                    )}
-                  </div>
-                )}
+                        <p className="text-xs text-slate-600 leading-relaxed mb-3">
+                          {plugin.description}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-3 border-t border-slate-100 text-xs">
+                        <span className="text-slate-400 font-mono text-[11px]">v{plugin.version} • {plugin.author}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemovePlugin(plugin.id)}
+                          className="flex items-center gap-1 text-rose-600 hover:text-rose-700 font-semibold text-[11px]"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          <span>Remove</span>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 2: Browse Community Plugins */}
+          {activeMainTab === 'community' && (
+            <div className="space-y-4">
+              <p className="text-xs text-slate-500 mb-2">
+                Prebuilt community integrations. Click <strong className="text-emerald-700">Add</strong> to install them instantly to your dashboard.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {COMMUNITY_PLUGINS_REGISTRY.map((comm) => {
+                  const isAlreadyAdded = installedPlugins.some((p) => p.id === comm.id);
+                  return (
+                    <div
+                      key={comm.id}
+                      className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4 shadow-sm flex flex-col justify-between"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <h3 className="font-bold text-sm text-slate-900">{comm.name}</h3>
+                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 capitalize">
+                            {comm.category}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-600 leading-relaxed mb-3">
+                          {comm.description}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-3 border-t border-slate-200 text-xs">
+                        <span className="text-slate-400 font-mono text-[11px]">{comm.author}</span>
+                        <button
+                          type="button"
+                          disabled={isAlreadyAdded}
+                          onClick={() => handleAddCommunityPlugin(comm)}
+                          className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                          {isAlreadyAdded ? (
+                            <>
+                              <Check className="h-3.5 w-3.5" />
+                              <span>Added</span>
+                            </>
+                          ) : (
+                            <>
+                              <Plus className="h-3.5 w-3.5" />
+                              <span>Add to Dashboard</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            )}
-          </div>
+            </div>
+          )}
+
+          {/* TAB 3: Add Plugin from .zip / Code File */}
+          {activeMainTab === 'upload' && (
+            <div className="py-12 px-6 text-center max-w-md mx-auto space-y-4">
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileUpload}
+                accept=".zip,.js,.ts,.json,.txt"
+                className="hidden"
+              />
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700">
+                <Upload className="h-7 w-7" />
+              </div>
+              <h3 className="text-base font-bold text-slate-900">Upload Plugin Code or .zip Archive</h3>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Upload a `.zip` plugin package or individual script file. Open Schedule will automatically parse, validate, and install it to your active workspace.
+              </p>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="inline-flex items-center gap-2 rounded-2xl bg-emerald-600 px-6 py-3 text-xs font-bold text-white shadow hover:bg-emerald-700 transition-colors cursor-pointer"
+              >
+                <Upload className="h-4 w-4" />
+                <span>Select .zip or Code File</span>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Footer */}

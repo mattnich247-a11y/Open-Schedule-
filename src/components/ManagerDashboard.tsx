@@ -67,6 +67,7 @@ import {
   TimesheetException,
   TimeOffRequest,
   ToastSalesRecord,
+  TimePunch,
 } from '../types';
 import {
   autoAllocateOpenShifts,
@@ -227,14 +228,36 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
   // PII Cloud Sync Outgoing Data Preview Modal
   const [cloudPreviewModalOpen, setCloudPreviewModalOpen] = useState<boolean>(false);
 
-  // Data Upload Modals for POS Sales & OpenTable Reservations
-  const [salesUploadModalOpen, setSalesUploadModalOpen] = useState<boolean>(false);
-  const [newSalesGross, setNewSalesGross] = useState<number>(2500);
-  const [newSalesOrders, setNewSalesOrders] = useState<number>(65);
+  // AI Custom Uploaded Data State
+  const [aiUploadedFiles, setAiUploadedFiles] = useState<{ name: string; content: string; size: number }[]>([]);
+  const aiFileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [reservationUploadModalOpen, setReservationUploadModalOpen] = useState<boolean>(false);
-  const [newCoversCount, setNewCoversCount] = useState<number>(48);
-  const [newPartyCount, setNewPartyCount] = useState<number>(14);
+  const handleAiFilesSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    Array.from(files).forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const content = event.target?.result as string || '';
+        setAiUploadedFiles((prev) => [
+          ...prev.filter((f) => f.name !== file.name),
+          { name: file.name, content, size: file.size },
+        ]);
+        setCopyFeedback(`✓ Uploaded "${file.name}" for AI analysis!`);
+      };
+      reader.readAsText(file);
+    });
+    e.target.value = '';
+  };
+
+  // Manager Manual Timecard Entry State
+  const [manualTimeModalOpen, setManualTimeModalOpen] = useState<boolean>(false);
+  const [manualEmployeeId, setManualEmployeeId] = useState<string>(state.employees[0]?.id || '');
+  const [manualDate, setManualDate] = useState<string>(weekStart);
+  const [manualClockInTime, setManualClockInTime] = useState<string>('09:00');
+  const [manualClockOutTime, setManualClockOutTime] = useState<string>('17:00');
+  const [manualReason, setManualReason] = useState<string>('Manager manual hours correction');
 
 // Manager Time-Off Addition Modal State
 const [managerTimeOffModalOpen, setManagerTimeOffModalOpen] = useState<boolean>(false);
@@ -244,6 +267,80 @@ const [mgrToEnd, setMgrToEnd] = useState<string>(weekStart);
 const [mgrToType, setMgrToType] = useState<'vacation' | 'pto' | 'personal'>('vacation');
 const [mgrToPartOfDay, setMgrToPartOfDay] = useState<'full_day' | 'morning_half' | 'night_half'>('full_day');
 const [mgrToReason, setMgrToReason] = useState<string>('Manager scheduled PTO');
+
+const handleSaveManualTimecard = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!manualEmployeeId || !manualDate || !manualClockInTime || !manualClockOutTime) {
+      alert('Please fill out all required fields.');
+      return;
+    }
+
+    const clockInIso = new Date(`${manualDate}T${manualClockInTime}:00`).toISOString();
+    const clockOutIso = new Date(`${manualDate}T${manualClockOutTime}:00`).toISOString();
+
+    // 1. Construct the audit punches for the security log
+    const clockInPunch: TimePunch = {
+      id: `punch_manual_in_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      employeeId: manualEmployeeId,
+      punchType: 'clock_in',
+      timestampIso: clockInIso,
+      verifiedVia: 'pin',
+      isTampered: false,
+      shiftId: '',
+      prevHash: '',
+      hash: '',
+      latitude: 0,
+      longitude: 0,
+      accuracyMeters: 0,
+      deviceId: 'manager_manual_override',
+    };
+
+    const clockOutPunch: TimePunch = {
+      id: `punch_manual_out_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      employeeId: manualEmployeeId,
+      punchType: 'clock_out',
+      timestampIso: clockOutIso,
+      verifiedVia: 'pin',
+      isTampered: false,
+      shiftId: '',
+      prevHash: '',
+      hash: '',
+      latitude: 0,
+      longitude: 0,
+      accuracyMeters: 0,
+      deviceId: 'manager_manual_override',
+    };
+
+    // 2. Create a published shift so it feeds directly into the Timesheet calculation table
+    const emp = empMap.get(manualEmployeeId);
+    const roleId = emp?.roleIds?.[0] || state.roles[0]?.id || 'role_general';
+    const departmentId = emp?.departmentIds?.[0] || state.departments[0]?.id || 'dept_general';
+
+    const manualShift: Shift = {
+      id: `shift_manual_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      date: manualDate,
+      roleId: roleId,
+      departmentId: departmentId,
+      employeeId: manualEmployeeId,
+      startTime: manualClockInTime,
+      endTime: manualClockOutTime,
+      requiredTags: [],
+      notes: manualReason,
+      isUpForGrabs: false,
+      status: 'published', // Published status ensures it appears in the timesheets summary table
+    };
+
+    // 3. Update state with both the new punches and the published shift
+    onUpdateState({
+      ...state,
+      punches: [...(state.punches || []), clockInPunch, clockOutPunch],
+      shifts: [...state.shifts, manualShift],
+    });
+
+    setManualTimeModalOpen(false);
+    setCopyFeedback('✓ Successfully added manual hours and updated timesheets!');
+    setTimeout(() => setCopyFeedback(null), 3000);
+  };
 
 const handleManagerSubmitTimeOff = (e: React.FormEvent) => {
   e.preventDefault();
@@ -928,41 +1025,7 @@ const newEmployee: Employee = {
     setCopyFeedback(`✓ Applied ${proposed.length} AI shifts to your live roster!`);
   };
 
-  // Add POS sales
-  const handleAddSalesRecord = (e: React.FormEvent) => {
-    e.preventDefault();
-    const newRecord: ToastSalesRecord = {
-      date: weekDays[5].date,
-      hour: 19,
-      grossSales: newSalesGross,
-      orderCount: newSalesOrders,
-      channel: 'dine_in',
-    };
-    onUpdateState({
-      ...state,
-      salesData: [...state.salesData, newRecord],
-    });
-    setSalesUploadModalOpen(false);
-    setCopyFeedback(`✓ Added $${newSalesGross.toLocaleString()} sales record!`);
-  };
-
-  // Add OpenTable covers
-  const handleAddReservationRecord = (e: React.FormEvent) => {
-    e.preventDefault();
-    const newRecord: OpenTableReservationRecord = {
-      date: weekDays[5].date,
-      timeSlot: '19:00',
-      coversExpected: newCoversCount,
-      partyCount: newPartyCount,
-      notes: 'Added from manager controls',
-    };
-    onUpdateState({
-      ...state,
-      reservationsData: [...state.reservationsData, newRecord],
-    });
-    setReservationUploadModalOpen(false);
-    setCopyFeedback(`✓ Added ${newCoversCount} guest covers record!`);
-  };
+  
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50 text-slate-800 select-none">
@@ -2277,6 +2340,29 @@ const shiftCardColor = isDraft
               />
             </div>
 
+            <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setManualTimeModalOpen(true)}
+                  className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-xs transition-colors"
+                >
+                  <Plus className="h-4 w-4 text-emerald-600" />
+                  <span>Manually Add Hours</span>
+                </button>
+
+                <ActionButton
+                  onClick={async () => {
+                    await new Promise((r) => setTimeout(r, 600));
+                    setCopyFeedback('✓ Pay period approved! Ready for payroll export.');
+                  }}
+                  idleText="Approve Pay Period Hours"
+                  workingText="Approving hours..."
+                  successText="✓ Pay Period Approved!"
+                  icon={<FileCheck className="h-4 w-4" />}
+                  className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow hover:bg-emerald-700"
+                />
+              </div>
+
             {/* Timesheets Table */}
             <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
               <table className="w-full text-left text-xs">
@@ -2320,6 +2406,69 @@ const shiftCardColor = isDraft
             </div>
           </div>
         )}
+
+        {/* Manual & Audit Timecard Entries Manager */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4 mt-6">
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm">Timecard Entries & Hours Corrections</h3>
+                <p className="text-xs text-slate-500">
+                  Review and remove any incorrect manual time entries or punch corrections. Deleting an entry instantly recalculates employee hours.
+                </p>
+              </div>
+
+              {state.shifts.filter((s) => s.notes?.includes('Manager manual hours correction')).length === 0 ? (
+                <p className="text-xs text-slate-400 italic py-2">No manual hour overrides logged yet.</p>
+              ) : (
+                <div className="overflow-x-auto rounded-xl border border-slate-200">
+                  <table className="w-full text-left text-xs divide-y divide-slate-200">
+                    <thead className="bg-slate-50 font-semibold text-slate-700">
+                      <tr>
+                        <th className="p-2.5">Date</th>
+                        <th className="p-2.5">Team Member</th>
+                        <th className="p-2.5">Shift Hours</th>
+                        <th className="p-2.5">Reason</th>
+                        <th className="p-2.5 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {state.shifts
+                        .filter((s) => s.notes?.includes('Manager manual hours correction'))
+                        .map((shift) => {
+                          const emp = empMap.get(shift.employeeId || '');
+                          const hrs = calculateShiftHours(shift.startTime, shift.endTime);
+                          return (
+                            <tr key={shift.id} className="hover:bg-slate-50/60">
+                              <td className="p-2.5 font-mono text-slate-700">{shift.date}</td>
+                              <td className="p-2.5 font-bold text-slate-900">{emp?.name || 'Unknown Staff'}</td>
+                              <td className="p-2.5 font-mono text-emerald-700">{hrs.toFixed(2)} hrs ({formatShiftRange12H(shift.startTime, shift.endTime)})</td>
+                              <td className="p-2.5 text-slate-600">{shift.notes}</td>
+                              <td className="p-2.5 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    // Remove both the shift and any associated manual punches
+                                    onUpdateState({
+                                      ...state,
+                                      shifts: state.shifts.filter((s) => s.id !== shift.id),
+                                      punches: state.punches.filter((p) => p.employeeId !== shift.employeeId || !p.timestampIso.startsWith(shift.date)),
+                                    });
+                                    setCopyFeedback('✓ Successfully removed manual hours entry and updated timesheets.');
+                                    setTimeout(() => setCopyFeedback(null), 3000);
+                                  }}
+                                  className="inline-flex items-center gap-1 rounded-lg bg-rose-50 px-2.5 py-1 text-[11px] font-bold text-rose-700 hover:bg-rose-100 transition-colors"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                  <span>Remove Hours</span>
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
 
         {/* TAB 4: Timecard Security Log */}
         {activeTab === 'security' && (
@@ -2753,12 +2902,37 @@ const shiftCardColor = isDraft
                   )}
                 </div>
 
-                {/* Data Access Checkboxes & Upload Modals */}
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <h3 className="font-bold text-slate-900 text-xs uppercase tracking-wider mb-3">
-                    1. Data Allowed for AI Analysis:
-                  </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+                {/* Data Access & "Upload more data" Section */}
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-3">
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-xs uppercase tracking-wider">
+                        1. Data Allowed for AI Analysis:
+                      </h3>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Select operational sources and attach custom data files for the AI to interpret.
+                      </p>
+                    </div>
+
+                    <input
+                      type="file"
+                      ref={aiFileInputRef}
+                      onChange={handleAiFilesSelected}
+                      multiple
+                      accept=".csv,.txt,.json,.md,.log"
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => aiFileInputRef.current?.click()}
+                      className="flex items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-slate-800 transition-colors cursor-pointer"
+                    >
+                      <Upload className="h-4 w-4" />
+                      <span>Upload More Data</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                     <label className="flex items-center gap-2 text-slate-700 font-medium">
                       <input
                         type="checkbox"
@@ -2782,49 +2956,39 @@ const shiftCardColor = isDraft
                       />
                       <span>Past Schedule History</span>
                     </label>
-
-                    <div className="flex items-center justify-between">
-                      <label className="flex items-center gap-2 text-slate-700 font-medium">
-                        <input
-                          type="checkbox"
-                          checked={aiDataAccess.allowOpenTableReservations}
-                          onChange={(e) =>
-                            setAiDataAccess({ ...aiDataAccess, allowOpenTableReservations: e.target.checked })
-                          }
-                          className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                        />
-                        <span>OpenTable Reservations</span>
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => setReservationUploadModalOpen(true)}
-                        className="text-[11px] font-bold text-emerald-700 hover:underline"
-                      >
-                        + Add Covers
-                      </button>
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <label className="flex items-center gap-2 text-slate-700 font-medium">
-                        <input
-                          type="checkbox"
-                          checked={aiDataAccess.allowPosSales}
-                          onChange={(e) =>
-                            setAiDataAccess({ ...aiDataAccess, allowPosSales: e.target.checked })
-                          }
-                          className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                        />
-                        <span>POS Daily Sales</span>
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => setSalesUploadModalOpen(true)}
-                        className="text-[11px] font-bold text-emerald-700 hover:underline"
-                      >
-                        + Add Sales
-                      </button>
-                    </div>
                   </div>
+
+                  {/* Attached Custom Files List */}
+                  {aiUploadedFiles.length > 0 && (
+                    <div className="pt-2 border-t border-slate-100">
+                      <span className="text-[11px] font-bold text-slate-700 block mb-2">
+                        Attached Files for AI Interpretation ({aiUploadedFiles.length}):
+                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        {aiUploadedFiles.map((file, idx) => (
+                          <div
+                            key={idx}
+                            className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 py-1.5 text-xs font-medium text-emerald-900"
+                          >
+                            <span>📎 {file.name}</span>
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              ({Math.round(file.size / 1024)} KB)
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setAiUploadedFiles(aiUploadedFiles.filter((_, i) => i !== idx))
+                              }
+                              className="text-emerald-700 hover:text-rose-600 font-bold ml-1"
+                              title="Remove file"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* 8 One-Click AI Action Buttons */}
@@ -4326,87 +4490,98 @@ const shiftCardColor = isDraft
             </form>
           </div>
         </div>
-      )}
+      )};
 
-      {/* MODAL: Add POS Sales */}
-      {salesUploadModalOpen && (
+    
+
+      {/* MODAL: Manager Manual Timecard Entry */}
+      {manualTimeModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
-          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
-            <h3 className="font-bold text-slate-900 text-base mb-3">Add POS Daily Sales</h3>
-            <form onSubmit={handleAddSalesRecord} className="space-y-3 text-xs">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl text-slate-800">
+            <div className="flex items-center justify-between mb-4 border-b border-slate-100 pb-3">
+              <h3 className="font-bold text-slate-900 text-base">Manually Add Employee Hours</h3>
+              <button
+                type="button"
+                onClick={() => setManualTimeModalOpen(false)}
+                className="text-slate-400 hover:text-slate-700"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSaveManualTimecard} className="space-y-3 text-xs">
               <div>
-                <label className="block text-slate-700 font-medium mb-1">Gross Sales ($)</label>
+                <label className="block text-slate-700 font-semibold mb-1">Team Member</label>
+                <select
+                  value={manualEmployeeId}
+                  onChange={(e) => setManualEmployeeId(e.target.value)}
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 bg-white text-slate-900 font-medium"
+                >
+                  {state.employees.map((emp) => (
+                    <option key={emp.id} value={emp.id}>
+                      {emp.name} (@{emp.username})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">Date</label>
                 <input
-                  type="number"
-                  value={newSalesGross}
-                  onChange={(e) => setNewSalesGross(Number(e.target.value))}
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-slate-900"
+                  type="date"
+                  value={manualDate}
+                  onChange={(e) => setManualDate(e.target.value)}
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-slate-900"
                   required
                 />
               </div>
-              <div>
-                <label className="block text-slate-700 font-medium mb-1">Total Orders</label>
-                <SmartNumberInput
-                  value={newSalesOrders}
-                  onChange={setNewSalesOrders}
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-slate-900"
-                />
-              </div>
-              <div className="flex justify-end gap-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setSalesUploadModalOpen(false)}
-                  className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs text-slate-600"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="rounded-xl bg-emerald-600 px-4 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 shadow"
-                >
-                  Save Sales
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
-      {/* MODAL: Add OpenTable Covers */}
-      {reservationUploadModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
-          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
-            <h3 className="font-bold text-slate-900 text-base mb-3">Add Table Reservations</h3>
-            <form onSubmit={handleAddReservationRecord} className="space-y-3 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Clock In Time</label>
+                  <input
+                    type="time"
+                    value={manualClockInTime}
+                    onChange={(e) => setManualClockInTime(e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2 text-slate-900"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Clock Out Time</label>
+                  <input
+                    type="time"
+                    value={manualClockOutTime}
+                    onChange={(e) => setManualClockOutTime(e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2 text-slate-900"
+                    required
+                  />
+                </div>
+              </div>
+
               <div>
-                <label className="block text-slate-700 font-medium mb-1">Expected Guest Covers</label>
-                <SmartNumberInput
-                  value={newCoversCount}
-                  onChange={setNewCoversCount}
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-slate-900"
+                <label className="block text-slate-700 font-semibold mb-1">Reason for Adjustment / Correction</label>
+                <input
+                  type="text"
+                  value={manualReason}
+                  onChange={(e) => setManualReason(e.target.value)}
+                  placeholder="e.g. Employee forgot to clock in"
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-slate-900"
                 />
               </div>
-              <div>
-                <label className="block text-slate-700 font-medium mb-1">Number of Parties</label>
-                <SmartNumberInput
-                  value={newPartyCount}
-                  onChange={setNewPartyCount}
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-slate-900"
-                />
-              </div>
-              <div className="flex justify-end gap-2 pt-3">
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setReservationUploadModalOpen(false)}
-                  className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs text-slate-600"
+                  onClick={() => setManualTimeModalOpen(false)}
+                  className="rounded-xl border border-slate-200 px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="rounded-xl bg-emerald-600 px-4 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 shadow"
+                  className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700 shadow"
                 >
-                  Save Covers
+                  Save & Add Timecard Entry
                 </button>
               </div>
             </form>
