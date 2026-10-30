@@ -299,8 +299,8 @@ export default function App() {
   // Step 4 Wizard: Mandatory Cloud Sync Setup & Testing
   const [wizardCloudSyncEnabled, setWizardCloudSyncEnabled] = useState<boolean>(true);
   const [wizardCloudProvider, setWizardCloudProvider] = useState<'supabase' | 'firebase' | 'local_relay'>('supabase');
-  const [wizardCloudProjectUrl, setWizardCloudProjectUrl] = useState<string>('https://relay.openschedule.local');
-  const [wizardCloudApiKey, setWizardCloudApiKey] = useState<string>('relay_anon_key_123456');
+  const [wizardCloudProjectUrl, setWizardCloudProjectUrl] = useState<string>('');
+  const [wizardCloudApiKey, setWizardCloudApiKey] = useState<string>('');
   const [isCloudTesting, setIsCloudTesting] = useState<boolean>(false);
   const [isCloudTested, setIsCloudTested] = useState<boolean>(false);
   const [cloudTestMessage, setCloudTestMessage] = useState<string>('');
