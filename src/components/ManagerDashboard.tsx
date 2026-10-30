@@ -3467,13 +3467,13 @@ const shiftCardColor = isDraft
 
               <div className="flex items-center gap-3">
                 <button
-                  type="button"
-                  onClick={() => window.open('/employee-help.pdf', '_blank', 'noopener,noreferrer')}
-                  className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-xs transition-colors cursor-pointer"
-                >
-                  <FileText className="h-4 w-4 text-emerald-600" />
-                  <span>Help and Setup Guide</span>
-                </button>
+  type="button"
+  onClick={() => window.open(`${import.meta.env.BASE_URL}employee-help.pdf`, '_blank', 'noopener,noreferrer')}
+  className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-xs transition-colors cursor-pointer"
+>
+  <FileText className="h-4 w-4 text-emerald-600" />
+  <span>Help and Setup Guide</span>
+</button>
 
                 <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1 text-xs">
                   <button

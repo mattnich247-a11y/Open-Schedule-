@@ -170,7 +170,7 @@ export default function App() {
           console.warn('Periodic atomic sync failed:', err);
         }
       }
-    }, 60000);
+    }, 15000);
     return () => clearInterval(interval);
   }, [state, isOnline]);
 
@@ -499,6 +499,7 @@ export default function App() {
 
       if (remaining === 0 && isLoggedIn) {
         setIsLoggedIn(false);
+        setIsDemoModeActive(false); // Reset demo mode state
         setLoginError('Manager vault locked after 5 minutes of inactivity for security.');
       }
     }, 1000);
@@ -839,6 +840,13 @@ export default function App() {
     };
 
     const newOrgId = `org_${wizardOrgName.toLowerCase().replace(/[^a-z0-9]/g, '') || 'biz'}_${Date.now().toString(36)}`;
+    
+    // Inside handleFinishWizard():
+setIsDemoModeActive(false); // Ensure newly created company is ineligible for demo mode
+setIsSetupWizardOpen(false);
+setIsMissingBrowserData(false);
+setIsLoggedIn(true);
+setAppMode('manager');
 
     const newOrgState: OrganizationState = {
       orgId: newOrgId,
@@ -1225,15 +1233,16 @@ export default function App() {
               {/* Employee Help PDF Button */}
               <button
                 type="button"
-                onClick={() => window.open('/employee-help.pdf', '_blank', 'noopener,noreferrer')}
+                onClick={() => window.open('/staff-help.pdf', '_blank', 'noopener,noreferrer')}
                 className="w-full flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 py-2.5 text-xs font-bold text-slate-700 transition-colors cursor-pointer"
               >
                 <FileText className="h-4 w-4 text-emerald-600" />
-                <span>Employee Help: How to Sign In Without Keys (PDF)</span>
+                <span>Staff Help: How to Sign In Without Keys (PDF)</span>
               </button>
             </form>
           ) : (
             <form onSubmit={handleLoginSubmit} className="space-y-4 text-xs">
+            
               {/* Mode selection buttons */}
               <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200">
                 <button
@@ -1352,21 +1361,34 @@ export default function App() {
             </button>
 
             <div className="pt-2 text-center">
-              <button
-                type="button"
-                onClick={() => {
-                  setLoginUsername('demo');
-                  setLoginPassword('demomode');
-                  setIsDemoModeActive(true);
-                  setIsLoggedIn(true);
-                  setAppMode('manager');
-                }}
-                className="text-[11px] font-medium text-slate-400 hover:text-emerald-700 transition-colors inline-flex items-center gap-1"
-              >
-                <Sparkles className="h-3 w-3" />
-                <span>Explore Sample Business (Demo Sandbox)</span>
-              </button>
-            </div>
+  <button
+    type="button"
+    onClick={() => {
+      setIsDemoModeActive(true);
+      setIsLoggedIn(true);
+      setAppMode('manager');
+
+      const bistro = getBistro313Preset();
+      const apex = getApexOutfitterPreset();
+      const medical = getMetroUrgentCarePreset();
+
+      const demoWorkspaces = {
+        [bistro.orgId || 'org_bistro313']: bistro,
+        [apex.orgId || 'org_apex']: apex,
+        [medical.orgId || 'org_medical']: medical,
+      };
+
+      setWorkspaces(demoWorkspaces);
+      setCurrentOrgId(bistro.orgId || 'org_bistro313');
+      setState(bistro);
+      setCurrentEmployee(bistro.employees[0] || null);
+    }}
+    className="text-[11px] font-medium text-slate-400 hover:text-emerald-700 transition-colors inline-flex items-center gap-1"
+  >
+    <Sparkles className="h-3 w-3" />
+    <span>Explore Sample Business (Demo Sandbox)</span>
+  </button>
+</div>
           </div>
         </div>
 
@@ -2307,13 +2329,14 @@ export default function App() {
 
             {/* Lock Vault button */}
             <button
-              type="button"
-              onClick={() => setIsLoggedIn(false)}
-              className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-            >
-              <LogOut className="h-3 w-3" />
-              <span>Lock Vault</span>
-            </button>
+  type="button"
+  onClick={() => {
+    setIsLoggedIn(false);
+    setIsDemoModeActive(false); // ✅ Correct: Executed inside the onClick function
+  }}
+>
+  Lock Vault
+</button>
           </div>
         </div>
       )}
@@ -2385,7 +2408,7 @@ export default function App() {
               ) : (
                 <>
                   <CheckCircle2 className="h-3 w-3 text-emerald-600" />
-                  <span>Online & Clean</span>
+                  <span>Saved</span>
                 </>
               )}
             </div>
@@ -2459,14 +2482,15 @@ export default function App() {
               </div>
             )}
 
-            <button
-              type="button"
-              onClick={() => setIsLoggedIn(false)}
-              className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-            >
-              <LogOut className="h-3.5 w-3.5 text-slate-500" />
-              <span>Lock Vault</span>
-            </button>
+           <button
+  type="button"
+  onClick={() => {
+    setIsLoggedIn(false);
+    setIsDemoModeActive(false); // ✅ Correct: Executed inside the onClick function
+  }}
+>
+  Lock Vault
+</button>
           </div>
         </div>
       )}
